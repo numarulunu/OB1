@@ -1076,3 +1076,15 @@ Next step:
 - Change: added `observation_kind` to benchmark search result metadata and gave `observation_kind=session` a small retrieval boost. New RED test first failed on missing/untiebroken session observation ranking, then passed after the change.
 - Result: real LoCoMo sweep on conversations `0,1`, max `50` questions improved to `42/50`, `45/50`, `48/50`, `49/50`; top-k 50 is now `98%`. Report leak scan stayed clean. The only remaining top-50 miss is multi-hop with no evidence row present in the isolated benchmark rows, so it is not a ranking miss.
 - Next step: stop LoCoMo micro-tuning for now and run broader repeated shadow parity on real project-memory queries plus exact-ID freshness/write-policy checks before any cutover.
+
+## 2026-05-15 - Kontext V2 LoCoMo parity deployed to VPS
+
+- Summary: Deployed the latest Kontext V2 LoCoMo retrieval parity work to VPS `root@178.104.203.128:/opt/kontext` and recovered a runtime dependency regression from the deploy.
+- Local verification before deploy: `python -m pytest tools/kontext-v2/tests -q` passed with `86 passed`. Real LoCoMo sweep on conversations `0,1`, max `50` questions, top-k `5,10,20,50` scored `42/50`, `45/50`, `48/50`, and `49/50` with no raw benchmark leak in reports.
+- Remote deploy: synced `tools/kontext-v2/kontext_v2`, `parity_eval.py`, and `requirements.txt` to `/opt/kontext/src`, rebuilt `kontext:latest`, and recreated only `kontext` and `kontext-worker`; `kontext-v2-db` stayed on the same container ID prefix `ab27e0340a5fb234ab11b24f` and its volume was not recreated.
+- Rollback: `/opt/kontext-backup-20260514T224055Z-locomo-parity.tgz`.
+- Fix during deploy: the first rebuilt app restarted because local `requirements.txt` had overwritten older remote runtime dependencies used by `cloud/*`. Restored the missing runtime packages in `/opt/kontext/src/requirements.txt` from the rollback-era set (`anthropic`, `jinja2`, `msgpack`, `pydantic`, `PyNaCl`, `sentence-transformers`, `zstandard`) and rebuilt image `sha256:68f2cbb4fbfe...`.
+- Remote verification: `kontext` healthy, `kontext-worker` running, `/api/v2/health` ok, `/api/v2/sync/status` ok, `/api/v2/tools` returned 9 tools, key deployed modules passed `py_compile`, and filtered recent logs showed no `ModuleNotFound`, traceback, import, syntax, or error lines.
+- Shadow report: fixed stale `/opt/kontext/scripts/kontext_shadow_report.py` local `/health` check to use `/docs`, then ran `/opt/kontext/scripts/kontext_shadow_report.py`. Latest report `/opt/kontext/reports/latest.json` is `ok=true`; dry-run sync saw 20 source rows with 0 created, 0 updated, 20 unchanged, 0 skipped; live MCP reliability under codex profile scored Kontext `12/12` and Mem0 `11/12`.
+- Decision: Kontext remains `shadow_read_only_mem0_source_of_truth`; no cutover and no memory write path change.
+- Next step: run repeated real project-memory shadow parity/exact-ID freshness checks over time, then decide whether to improve Mem0 metadata or Kontext ranking from observed real-query misses.
