@@ -4,15 +4,18 @@ import hashlib
 from dataclasses import dataclass
 from typing import Any, Iterable
 
+from psycopg.rows import dict_row
+
 from kontext_v2.models import MemoryRecord
 from kontext_v2.repository import KontextRepository
-from kontext_v2.retrieval import search_memories
+from kontext_v2.retrieval import score_row
 
 
 @dataclass(frozen=True)
 class BenchmarkMessage:
     role: str
     content: str
+    source_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -51,10 +54,14 @@ class KontextBenchmarkAdapter:
         conversation_id: str,
         session_id: str,
         timestamp: str | None = None,
+        source_ids: list[str] | None = None,
     ) -> BenchmarkAddResult:
         text = _message_text(messages)
+        ids = [str(value).strip() for value in (source_ids or []) if str(value).strip()]
+        if not ids:
+            ids = [str(message.source_id).strip() for message in messages if message.source_id]
         digest = stable_hash(
-            "|".join([self.dataset, self.run_id, user_id, conversation_id, session_id, text])
+            "|".join([self.dataset, self.run_id, user_id, conversation_id, session_id, text, ",".join(ids)])
         )
         external_id = f"benchmark:{self.dataset}:{self.run_id}:{digest[:16]}"
         metadata = {
@@ -65,6 +72,7 @@ class KontextBenchmarkAdapter:
             "conversation_id": conversation_id,
             "session_id": session_id,
             "timestamp": timestamp,
+            "source_ids": ids,
             "profile": "benchmark",
             "is_live_memory": False,
             "domains": ["benchmark"],
@@ -94,43 +102,56 @@ class KontextBenchmarkAdapter:
                     "metadata": {
                         "benchmark_dataset": self.dataset,
                         "benchmark_run_id": self.run_id,
+                        "source_ids": ids,
                     },
                 }
             ]
         )
 
+    def _candidate_rows(self, user_id: str) -> list[dict[str, Any]]:
+        with self.conn.cursor(row_factory=dict_row) as cur:
+            rows = cur.execute(
+                """
+                SELECT external_mem0_id, title, text, metadata, memory_type,
+                       current_status, memory_tier, signal_strength,
+                       0.0::double precision AS rank
+                FROM memories
+                WHERE metadata->>'source' = 'benchmark'
+                  AND metadata->>'benchmark_dataset' = %s
+                  AND metadata->>'benchmark_run_id' = %s
+                  AND metadata->>'benchmark_user_id' = %s
+                  AND memory_type = 'benchmark_observation'
+                  AND current_status = 'benchmark'
+                  AND memory_tier = 'cold'
+                ORDER BY updated_at DESC
+                LIMIT 10000
+                """,
+                (self.dataset, self.run_id, user_id),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def search(self, query: str, user_id: str, top_k: int = 200) -> list[dict[str, Any]]:
-        rows = search_memories(
-            self.repo,
-            query=query,
-            top_k=top_k,
-            domains=[],
-            memory_types=["benchmark_observation"],
-            memory_tiers=["cold"],
-            current_statuses=["benchmark"],
-        )
+        limit = min(max(int(top_k or 5), 1), 200)
+        scored = [
+            (index, score_row(query, row, requested_domains=set(), requested_tiers={"cold"}), row)
+            for index, row in enumerate(self._candidate_rows(user_id))
+        ]
+        scored.sort(key=lambda item: (item[1], -item[0]), reverse=True)
         results = []
-        for row in rows:
+        for _, score, row in scored[:limit]:
             metadata = row.get("metadata") or {}
-            if metadata.get("source") != "benchmark":
-                continue
-            if metadata.get("benchmark_dataset") != self.dataset:
-                continue
-            if metadata.get("benchmark_run_id") != self.run_id:
-                continue
-            if metadata.get("benchmark_user_id") != user_id:
-                continue
             results.append(
                 {
-                    "id": row.get("external_mem0_id") or row.get("id"),
-                    "memory": row.get("text") or row.get("memory") or "",
-                    "score": float(row.get("score") or 0.0),
+                    "id": row.get("external_mem0_id"),
+                    "memory": row.get("text") or "",
+                    "score": float(score),
                     "metadata": {
                         "benchmark_dataset": self.dataset,
                         "benchmark_run_id": self.run_id,
                         "conversation_id": metadata.get("conversation_id"),
                         "session_id": metadata.get("session_id"),
+                        "source_ids": [str(value) for value in metadata.get("source_ids") or []],
                     },
                 }
             )
-        return results[:top_k]
+        return results

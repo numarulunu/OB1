@@ -1,0 +1,67 @@
+﻿[
+  {
+    "sample_id": "sample-0",
+    "conversation": {
+      "speaker_a": "Avery",
+      "speaker_b": "Blake",
+      "session_1_date_time": "2023-05-07",
+      "session_1": [
+        {
+          "speaker": "Avery",
+          "dia_id": "D1:1",
+          "text": "I visited the neighborhood support group on May 7."
+        },
+        {
+          "speaker": "Blake",
+          "dia_id": "D1:2",
+          "text": "I will remember the May 7 support group visit."
+        }
+      ],
+      "session_2_date_time": "2023-05-09",
+      "session_2": [
+        {
+          "speaker": "Avery",
+          "dia_id": "D2:1",
+          "text": "The poetry reading will be at the old library."
+        }
+      ]
+    },
+    "qa": [
+      {
+        "question": "When did Avery visit the support group?",
+        "answer": "May 7",
+        "evidence": ["D1:1"],
+        "category": 2
+      },
+      {
+        "question": "Where will the poetry reading be?",
+        "answer": "old library",
+        "evidence": ["D2:1"],
+        "category": 4
+      }
+    ]
+  },
+  {
+    "sample_id": "sample-1",
+    "conversation": {
+      "speaker_a": "Casey",
+      "speaker_b": "Devon",
+      "session_1_date_time": "2023-06-01",
+      "session_1": [
+        {
+          "speaker": "Casey",
+          "dia_id": "D1:1",
+          "text": "My train arrives at platform five."
+        }
+      ]
+    },
+    "qa": [
+      {
+        "question": "Which platform has Casey's train?",
+        "answer": "platform five",
+        "evidence": ["D1:1"],
+        "category": 4
+      }
+    ]
+  }
+]

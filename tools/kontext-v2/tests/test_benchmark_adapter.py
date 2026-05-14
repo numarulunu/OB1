@@ -1,9 +1,16 @@
 from pathlib import Path
 
-from kontext_v2.benchmarks.fixtures import load_locomo_tiny_fixture
+import os
+
+import psycopg
+
+from kontext_v2.benchmarks.adapter import BenchmarkMessage, KontextBenchmarkAdapter
+from kontext_v2.benchmarks.fixtures import load_locomo_real_fixture, load_locomo_tiny_fixture
+from kontext_v2.schema import apply_schema
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "locomo_tiny.json"
+REAL_FIXTURE = Path(__file__).parent / "fixtures" / "locomo_real_shape.json"
 
 
 def test_load_locomo_tiny_fixture_returns_conversations_and_questions():
@@ -14,12 +21,27 @@ def test_load_locomo_tiny_fixture_returns_conversations_and_questions():
     assert fixture["conversations"][0]["conversation_id"] == "tiny-conv-1"
     assert fixture["questions"][0]["question"] == "Where is Alice planning to travel in June?"
     assert fixture["questions"][0]["expected_terms"] == ["berlin", "june"]
-import os
 
-import psycopg
 
-from kontext_v2.benchmarks.adapter import BenchmarkMessage, KontextBenchmarkAdapter
-from kontext_v2.schema import apply_schema
+def test_load_locomo_real_fixture_normalizes_sessions_and_questions():
+    fixture = load_locomo_real_fixture(
+        REAL_FIXTURE,
+        conversation_indices=[0],
+        max_questions=1,
+    )
+
+    assert fixture["dataset"] == "locomo10"
+    assert len(fixture["conversations"]) == 1
+    assert fixture["conversations"][0]["conversation_id"] == "sample-0"
+    assert len(fixture["conversations"][0]["sessions"]) == 2
+    assert fixture["conversations"][0]["sessions"][0]["session_id"] == "session_1"
+    assert fixture["conversations"][0]["sessions"][0]["date"] == "2023-05-07"
+    assert fixture["conversations"][0]["sessions"][0]["source_ids"] == ["D1:1", "D1:2"]
+    assert fixture["conversations"][0]["sessions"][0]["messages"][0]["role"] == "user"
+    assert fixture["conversations"][0]["sessions"][0]["messages"][0]["source_id"] == "D1:1"
+    assert fixture["questions"][0]["question_id"] == "sample-0-q-1"
+    assert fixture["questions"][0]["category"] == "temporal"
+    assert fixture["questions"][0]["evidence"] == ["D1:1"]
 
 
 def _adapter(run_id: str) -> KontextBenchmarkAdapter:
@@ -37,6 +59,7 @@ def test_adapter_add_messages_writes_isolated_benchmark_memories():
             conversation_id="tiny-conv-1",
             session_id="session_1",
             timestamp="2024-06-01",
+            source_ids=["D1:1"],
         )
 
         memory = adapter.repo.fetch_by_external_id(added.results[0]["id"])
@@ -45,6 +68,7 @@ def test_adapter_add_messages_writes_isolated_benchmark_memories():
         assert memory.metadata["benchmark_run_id"] == "unit-adapter-add"
         assert memory.metadata["profile"] == "benchmark"
         assert memory.metadata["is_live_memory"] is False
+        assert memory.metadata["source_ids"] == ["D1:1"]
     finally:
         adapter.close()
 
@@ -58,6 +82,7 @@ def test_adapter_search_returns_mem0_like_results_without_raw_debug():
             conversation_id="tiny-conv-1",
             session_id="session_1",
             timestamp="2024-06-01",
+            source_ids=["D1:1"],
         )
 
         results = adapter.search(
@@ -70,6 +95,32 @@ def test_adapter_search_returns_mem0_like_results_without_raw_debug():
         assert results[0]["id"].startswith("benchmark:locomo_tiny:unit-adapter-search:")
         assert "memory" in results[0]
         assert isinstance(results[0]["score"], float)
+        assert results[0]["metadata"]["source_ids"] == ["D1:1"]
         assert "query_debug" not in results[0]
+    finally:
+        adapter.close()
+
+def test_adapter_search_filters_user_before_top_k_cap():
+    adapter = _adapter("unit-adapter-user-filter")
+    try:
+        adapter.add(
+            messages=[BenchmarkMessage("user", "Target: orchard lantern detail.")],
+            user_id="target-user",
+            conversation_id="target-conv",
+            session_id="session_1",
+            source_ids=["D1:1"],
+        )
+        for index in range(25):
+            adapter.add(
+                messages=[BenchmarkMessage("user", "Noise: orchard lantern detail.")],
+                user_id=f"noise-user-{index}",
+                conversation_id=f"noise-conv-{index}",
+                session_id="session_1",
+                source_ids=[f"N{index}"],
+            )
+
+        results = adapter.search("orchard lantern detail", "target-user", top_k=5)
+
+        assert [row["metadata"]["source_ids"] for row in results] == [["D1:1"]]
     finally:
         adapter.close()

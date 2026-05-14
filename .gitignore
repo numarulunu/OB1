@@ -27,3 +27,4 @@ deno.lock
 # Kontext benchmark outputs
 tools/kontext-v2/benchmark-results/
 benchmark-results/
+tools/kontext-v2/benchmark-data/

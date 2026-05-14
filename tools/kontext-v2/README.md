@@ -52,3 +52,22 @@ python -m kontext_v2.benchmarks.locomo_predict `
 ```
 
 Expected output is a one-line aggregate summary such as `matched=3/3`. The command must not print raw memory text or secrets.
+## Real LoCoMo Predict-Only Benchmark
+
+This mode downloads the public LoCoMo `locomo10.json` fixture into ignored local cache `tools/kontext-v2/benchmark-data/` and writes sanitized reports under `tools/kontext-v2/benchmark-results/`. It ingests benchmark rows only with `source=benchmark`, `profile=benchmark`, and `is_live_memory=false`.
+
+Run a small one-conversation smoke:
+
+```powershell
+$env:PYTHONPATH = "tools\kontext-v2"
+python -m kontext_v2.benchmarks.locomo_predict `
+  --database-url "postgresql://kontext_v2:kontext_v2@localhost:55434/kontext_v2" `
+  --dataset-url "https://raw.githubusercontent.com/snap-research/locomo/main/data/locomo10.json" `
+  --output-dir tools\kontext-v2\benchmark-results `
+  --run-id real-locomo-smoke `
+  --top-k 20 `
+  --conversations 0 `
+  --max-questions 5
+```
+
+Reports contain question IDs, categories, match counts, result IDs, and result hashes. They intentionally do not include raw conversation text, raw question text, raw answers, or raw memory text.
