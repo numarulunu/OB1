@@ -23,3 +23,7 @@ sync-log.json
 
 # Build artifacts
 deno.lock
+
+# Kontext benchmark outputs
+tools/kontext-v2/benchmark-results/
+benchmark-results/
