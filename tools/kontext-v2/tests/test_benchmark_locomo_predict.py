@@ -1,10 +1,10 @@
-﻿import os
+import os
 from pathlib import Path
 
 import psycopg
 
-from kontext_v2.benchmarks.locomo_predict import run_locomo_predict_only
-from kontext_v2.benchmarks.reporting import build_predict_only_report, write_report_files
+from kontext_v2.benchmarks.locomo_predict import run_locomo_predict_only, run_locomo_predict_sweep
+from kontext_v2.benchmarks.reporting import build_predict_only_report, build_predict_sweep_report, write_report_files
 from kontext_v2.schema import apply_schema
 
 
@@ -73,6 +73,63 @@ def test_run_locomo_predict_only_real_shape_uses_evidence_and_sanitizes_report(t
     assert report["total_questions"] == 1
     assert report["matched_questions"] == 1
     assert report["categories"]["temporal"]["matched"] == 1
+    output_text = "\n".join(path.read_text(encoding="utf-8") for path in tmp_path.iterdir())
+    assert "Avery" not in output_text
+    assert "support group" not in output_text
+    assert "May 7" not in output_text
+    assert "When did Avery" not in output_text
+
+def test_sweep_report_tracks_cutoff_misses_without_raw_memory(tmp_path: Path):
+    report = build_predict_sweep_report(
+        "locomo10",
+        "unit-sweep-report",
+        [1, 2],
+        [
+            {
+                "question_id": "sample-0-q-1",
+                "category": "temporal",
+                "search_latency_ms": 10.0,
+                "evidence": ["D1:2"],
+                "expected_terms": [],
+                "search_results": [
+                    {"id": "benchmark:one", "memory": "first raw memory text", "metadata": {"source_ids": ["D1:1"]}},
+                    {"id": "benchmark:two", "memory": "second raw memory text", "metadata": {"source_ids": ["D1:2"]}},
+                ],
+            }
+        ],
+    )
+
+    assert report["mode"] == "predict-only-sweep"
+    assert report["sweeps"]["1"]["matched_questions"] == 0
+    assert report["sweeps"]["2"]["matched_questions"] == 1
+    assert report["miss_analysis"]["1"]["reasons"] == {"evidence_below_cutoff": 1}
+    assert report["questions"][0]["first_hit_top_k"] == 2
+    assert "raw memory text" not in str(report)
+    paths = write_report_files(report, tmp_path)
+    assert paths["json"].name.endswith("predict-only-sweep.json")
+
+
+def test_run_locomo_predict_sweep_real_shape_writes_sanitized_report(tmp_path: Path):
+    database_url = os.environ["KONTEXT_V2_DATABASE_URL"]
+    with psycopg.connect(database_url) as conn:
+        apply_schema(conn)
+
+    report = run_locomo_predict_sweep(
+        database_url,
+        FIXTURE,
+        tmp_path,
+        "unit-real-sweep",
+        top_k_values=[1, 5],
+        dataset_path=REAL_FIXTURE,
+        conversations="0",
+        max_questions=2,
+    )
+
+    assert report["dataset"] == "locomo10"
+    assert report["mode"] == "predict-only-sweep"
+    assert report["top_k_values"] == [1, 5]
+    assert report["total_questions"] == 2
+    assert set(report["sweeps"]) == {"1", "5"}
     output_text = "\n".join(path.read_text(encoding="utf-8") for path in tmp_path.iterdir())
     assert "Avery" not in output_text
     assert "support group" not in output_text

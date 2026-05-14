@@ -1044,3 +1044,11 @@ Next step:
 - Verification: new RED test first exposed adapter filtering after top-k cap; fixed by filtering benchmark dataset/run/user in SQL before scoring. Focused benchmark tests passed (`8 passed`); full Kontext V2 tests passed (`81 passed`). Real LoCoMo smoke on conversation `0`, max `5` questions, top-k `20` produced `matched=2/5`; leak scan over benchmark reports found no raw sample text/name matches.
 - Decision: Kontext's current lexical retrieval can run the real benchmark path, but the 2/5 smoke score shows the next useful work is retrieval quality, not more harness plumbing.
 - Next step: run a larger predict-only slice and compare against Mem0/expected baseline, then implement retrieval fusion/decay improvements against the benchmark instead of guessing.
+## 2026-05-14 - Kontext V2 LoCoMo top-k sweep and miss analysis
+
+- Summary: Added a larger LoCoMo predict-only sweep mode for Kontext V2. The runner can evaluate multiple top-k cutoffs from one max-top-k search and writes sanitized miss-analysis reports with aggregate reasons per cutoff/category.
+- Files touched: `tools/kontext-v2/kontext_v2/benchmarks/reporting.py`, `tools/kontext-v2/kontext_v2/benchmarks/locomo_predict.py`, `tools/kontext-v2/tests/test_benchmark_locomo_predict.py`, `tools/kontext-v2/README.md`, `project_log.md`.
+- Safety: reports still contain no raw conversation text, raw questions, raw answers, or raw memory text. They include question IDs, categories, match booleans/counts, miss reason labels, result IDs, and result hashes.
+- Verification: focused benchmark tests passed (`10 passed`); full Kontext V2 tests passed (`83 passed`). Real LoCoMo sweep smoke on conversation `0`, max `20` questions, top-k `5,10,20,50` produced `9/20`, `11/20`, `11/20`, and `14/20` evidence hits. Leak scan over the generated sweep report returned no raw sample text/name matches.
+- Finding: Top-k 50 still had 6 evidence-not-retrieved misses. Lower cutoffs additionally had evidence-below-cutoff misses, so the next retrieval work should improve both candidate recall and ranking.
+- Next step: implement retrieval-quality improvements against these miss classes, starting with stronger Postgres candidate recall and scoring boosts for evidence/date/entity terms.

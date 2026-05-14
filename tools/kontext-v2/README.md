@@ -71,3 +71,18 @@ python -m kontext_v2.benchmarks.locomo_predict `
 ```
 
 Reports contain question IDs, categories, match counts, result IDs, and result hashes. They intentionally do not include raw conversation text, raw question text, raw answers, or raw memory text.
+Top-k sweep and miss analysis:
+
+```powershell
+$env:PYTHONPATH = "tools\kontext-v2"
+python -m kontext_v2.benchmarks.locomo_predict `
+  --database-url "postgresql://kontext_v2:kontext_v2@localhost:55434/kontext_v2" `
+  --dataset-url "https://raw.githubusercontent.com/snap-research/locomo/main/data/locomo10.json" `
+  --output-dir tools\kontext-v2\benchmark-results `
+  --run-id real-locomo-sweep `
+  --top-k-sweep 5,10,20,50 `
+  --conversations 0 `
+  --max-questions 20
+```
+
+Sweep reports compare several retrieval cutoffs from one max-top-k search. Miss analysis is aggregate-only and classifies misses as evidence below cutoff, evidence not retrieved, expected terms below cutoff, expected terms not retrieved, or no match rule.
