@@ -1,0 +1,179 @@
+{
+    "cases":  [
+                  {
+                      "name":  "ai-memory-architecture",
+                      "query":  "What is the current architecture of my AI memory system?",
+                      "expected_domains":  [
+                                               "ai",
+                                               "systems",
+                                               "infrastructure"
+                                           ],
+                      "expected_memory_types":  [
+                                                    "architecture_decision",
+                                                    "project_state",
+                                                    "decision"
+                                                ],
+                      "min_results":  1
+                  },
+                  {
+                      "name":  "mem0-ingestion-pipeline",
+                      "query":  "How should the Mem0 MCP ingestion pipeline work across Codex Claude and ChatGPT?",
+                      "expected_domains":  [
+                                               "ai",
+                                               "systems",
+                                               "workflow"
+                                           ],
+                      "expected_memory_types":  [
+                                                    "architecture_decision",
+                                                    "project_state",
+                                                    "workflow"
+                                                ],
+                      "min_results":  1
+                  },
+                  {
+                      "name":  "vps-memory-infrastructure",
+                      "query":  "How is the Mem0 MCP Docker VPS setup wired?",
+                      "expected_domains":  [
+                                               "ai",
+                                               "systems",
+                                               "infrastructure"
+                                           ],
+                      "expected_memory_types":  [
+                                                    "project_state",
+                                                    "architecture_decision"
+                                                ],
+                      "min_results":  1
+                  },
+                  {
+                      "name":  "ai-agent-preferences",
+                      "query":  "What are my preferences for AI agents, memory, and automation systems?",
+                      "expected_domains":  [
+                                               "ai",
+                                               "systems",
+                                               "workflow"
+                                           ],
+                      "expected_memory_types":  [
+                                                    "preference",
+                                                    "decision",
+                                                    "project_state"
+                                                ],
+                      "min_results":  1
+                  },
+                  {
+                      "name":  "vocality-current-state",
+                      "query":  "What is the current state of Vocality and my student migration workflow?",
+                      "expected_domains":  [
+                                               "business",
+                                               "vocality",
+                                               "workflow"
+                                           ],
+                      "expected_memory_types":  [
+                                                    "project_state",
+                                                    "workflow",
+                                                    "business_context",
+                                                    "decision"
+                                                ],
+                      "min_results":  1
+                  },
+                  {
+                      "name":  "opera-funding-goal",
+                      "query":  "What is my opera career funding goal and income engine plan?",
+                      "expected_domains":  [
+                                               "opera",
+                                               "business",
+                                               "finance"
+                                           ],
+                      "expected_memory_types":  [
+                                                    "goal",
+                                                    "project_state",
+                                                    "career_context"
+                                                ],
+                      "min_results":  1
+                  },
+                  {
+                      "name":  "finance-pfa-context",
+                      "query":  "What do you know about my finances, PFA, income, and investments?",
+                      "expected_domains":  [
+                                               "finance",
+                                               "business"
+                                           ],
+                      "expected_memory_types":  [
+                                                    "project_state",
+                                                    "finance_context",
+                                                    "decision"
+                                                ],
+                      "min_results":  1
+                  },
+                  {
+                      "name":  "mother-family-origin-patterns",
+                      "query":  "What do you know about my mother and family-origin psychological patterns?",
+                      "expected_domains":  [
+                                               "relationships",
+                                               "psychology",
+                                               "family"
+                                           ],
+                      "expected_memory_types":  [
+                                                    "relationship_pattern",
+                                                    "formative_event",
+                                                    "clinical_context"
+                                                ],
+                      "min_results":  1
+                  },
+                  {
+                      "name":  "luiza-relationship-patterns",
+                      "query":  "What are the relationship patterns and attachment dynamics with Luiza?",
+                      "expected_domains":  [
+                                               "relationships",
+                                               "psychology"
+                                           ],
+                      "expected_memory_types":  [
+                                                    "relationship_pattern",
+                                                    "formative_event"
+                                                ],
+                      "min_results":  1
+                  },
+                  {
+                      "name":  "psychology-execution-patterns",
+                      "query":  "What are my recurring execution blockers, avoidance patterns, and workflow psychology?",
+                      "expected_domains":  [
+                                               "psychology",
+                                               "workflow"
+                                           ],
+                      "expected_memory_types":  [
+                                                    "psychology_pattern",
+                                                    "execution_pattern",
+                                                    "workflow"
+                                                ],
+                      "min_results":  1
+                  },
+                  {
+                      "name":  "own-voice-career-context",
+                      "query":  "What should be remembered about my own voice, vocal development, roles, and opera direction?",
+                      "expected_domains":  [
+                                               "vocality",
+                                               "opera"
+                                           ],
+                      "expected_memory_types":  [
+                                                    "career_context",
+                                                    "voice_profile",
+                                                    "project_state"
+                                                ],
+                      "min_results":  1
+                  },
+                  {
+                      "name":  "memory-cleanup-policy",
+                      "query":  "What is the policy for keeping, deleting, and compacting my second-brain memories?",
+                      "expected_domains":  [
+                                               "ai",
+                                               "systems",
+                                               "workflow"
+                                           ],
+                      "expected_memory_types":  [
+                                                    "decision",
+                                                    "policy",
+                                                    "architecture_decision"
+                                                ],
+                      "min_results":  1
+                  }
+              ]
+}

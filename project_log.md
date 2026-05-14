@@ -1098,3 +1098,15 @@ Next step:
 - Exact-ID result after fix: 77 checked, 77 fresh, 0 stale, 0 type mismatches, 0 domain-overlap misses. All 77 still have raw source-hash mismatch, confirming the old check was too strict for Mem0 fetch-row wrappers.
 - Miss classification: Kontext ranking does not need more LoCoMo-style tuning right now. The current real-project gap is Mem0/eval metadata taxonomy for Vocality: Mem0 returned relevant Vocality rows, but their `memory_type` was `decision` while the eval expected workflow/business/project-state types.
 - Next step: add exact-ID freshness into the scheduled shadow report, then decide whether to broaden the Vocality eval expected types or enrich those Mem0 memories with a more precise workflow/business_context type.
+
+## 2026-05-15 - Kontext scheduled freshness and Vocality eval taxonomy deployed
+
+- Summary: Added exact-ID freshness to the scheduled Kontext shadow report and fixed the bounded Vocality eval taxonomy miss without changing Mem0 memories.
+- Files touched: `tools/kontext-v2/scripts/kontext_shadow_report.py`, `tools/kontext-v2/kontext_v2/exact_id_freshness_cli.py`, `tools/kontext-v2/tests/test_shadow_report.py`, `tools/kontext-v2/tests/test_mcp_reliability_eval.py`, `tools/mem0-remote-mcp/retrieval_eval_cases.v1.13.json`, and `project_log.md`.
+- Exact-ID reporting: shadow reports now run `kontext_v2.exact_id_freshness_cli` inside the `kontext` container and include an aggregate-only `exact_id_freshness` block. The report `ok` gate now fails if exact-ID freshness fails. No raw memory text, profile tokens, or remote env values are written to the report.
+- Vocality eval fix: added `decision` as an accepted `memory_type` for the `vocality-current-state` eval case because live Mem0 retrieved relevant Vocality state/strategy rows typed as decisions. This fixes the eval expectation rather than mutating exact memories.
+- Remote deploy: backed up `/opt/kontext` script/module state, deployed the shadow report script, deployed `exact_id_freshness_cli.py`, rebuilt `kontext:latest`, recreated only `kontext` and `kontext-worker`, then deployed the updated retrieval eval case file to `/opt/kontext/src/retrieval_eval_cases.v1.13.json`. `kontext-v2-db` stayed running and healthy.
+- Remote verification: `/api/v2/health`, `/api/v2/sync/status`, and `/api/v2/tools` returned 200; container `py_compile` passed; filtered logs were clean. Fresh report `/opt/kontext/reports/kontext-shadow-report-20260514T233452Z.json` returned `ok=true`, `sync_dry_run=true`, `exact_id_freshness=true`, Kontext `12/12`, and Mem0 `12/12`.
+- Local verification: RED tests first failed for missing scheduled exact-ID reporting and missing `decision` in the Vocality case. After implementation, focused tests passed and full Kontext V2 suite passed with `89 passed`.
+- Decision: no direct Mem0 memory updates were needed. The current shadow gate is stronger now: retrieval parity, dry-run sync, and exact-ID freshness are all checked by the scheduled report.
+- Next step: let scheduled reports accumulate, then use real misses rather than benchmark micro-tuning to decide future Kontext ranking or metadata work.
