@@ -1067,3 +1067,12 @@ Next step:
 - Verification: new RED test first failed because sourced sessions only wrote per-turn rows; after implementation it passed. Benchmark-focused tests passed (`12 passed`); full Kontext V2 tests passed (`85 passed`). Larger real LoCoMo sweep on conversations `0,1`, max `50` questions, top-k `5,10,20,50` improved from `27/50`, `30/50`, `34/50`, `37/50` to `40/50`, `41/50`, `44/50`, `45/50`. Leak scan on the generated sweep report found no raw report keys or long raw strings.
 - Finding: session context rows are the biggest local retrieval gain so far. Remaining top-50 misses are 1 open-domain and 4 multi-hop evidence-not-retrieved cases; top-k 50 is now `90%` on the larger slice, with average search latency around `360 ms`.
 - Next step: inspect the remaining 5 misses without exposing raw text, then decide whether to add a lightweight entity/fact extraction layer or stop optimizing the lexical benchmark path and compare against Mem0 on the same slice.
+
+## 2026-05-15 - Kontext V2 Mem0-ranker parity pass
+
+- Summary: Compared Kontext V2 retrieval against the local Mem0 remote-MCP ranker on the same isolated LoCoMo benchmark rows, then copied the one clear useful behavior: favoring session observations for multi-hop retrieval.
+- Files touched: `tools/kontext-v2/kontext_v2/retrieval.py`, `tools/kontext-v2/kontext_v2/benchmarks/adapter.py`, `tools/kontext-v2/tests/test_benchmark_adapter.py`, `tools/kontext-v2/README.md`, `project_log.md`.
+- Verification data: safe local Mem0-ranker comparison on conversations `0,1`, max `50` questions showed Kontext at `40/50`, `41/50`, `44/50`, `45/50` for top-k `5,10,20,50`; Mem0 local ranker scored `30/50`, `34/50`, `38/50`, `38/50`. Mem0 had 2 top-50 hits Kontext missed, both multi-hop session-observation cases.
+- Change: added `observation_kind` to benchmark search result metadata and gave `observation_kind=session` a small retrieval boost. New RED test first failed on missing/untiebroken session observation ranking, then passed after the change.
+- Result: real LoCoMo sweep on conversations `0,1`, max `50` questions improved to `42/50`, `45/50`, `48/50`, `49/50`; top-k 50 is now `98%`. Report leak scan stayed clean. The only remaining top-50 miss is multi-hop with no evidence row present in the isolated benchmark rows, so it is not a ranking miss.
+- Next step: stop LoCoMo micro-tuning for now and run broader repeated shadow parity on real project-memory queries plus exact-ID freshness/write-policy checks before any cutover.

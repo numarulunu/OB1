@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import re
 from typing import Any, Iterable
@@ -301,6 +301,8 @@ def score_row(query: str, row: dict[str, Any], requested_domains: set[str], requ
         score += 8.0
     if type_name in {"execution_pattern", "psychology_pattern", "workflow"} and query_domains & {"psychology", "workflow"}:
         score += 8.0
+    if row_metadata(row).get("observation_kind") == "session":
+        score += 4.0
     for token in ("luiza", "mother", "pfa", "vocality", "opera"):
         if token in normalized_text(expanded) and token in combined_text:
             score += 6.0
@@ -388,7 +390,3 @@ def search_memories(
     ]
     scored.sort(key=lambda item: (item[1], -item[0]), reverse=True)
     return [row for _, _, row in scored[:limit]]
-
-
-
-

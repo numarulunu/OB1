@@ -183,6 +183,7 @@ class KontextBenchmarkAdapter:
                         "conversation_id": metadata.get("conversation_id"),
                         "session_id": metadata.get("session_id"),
                         "source_ids": [str(value) for value in metadata.get("source_ids") or []],
+                        "observation_kind": metadata.get("observation_kind"),
                     },
                 }
             )

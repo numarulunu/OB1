@@ -165,3 +165,38 @@ def test_adapter_search_uses_session_context_for_multi_hop_questions():
         assert results[0]["metadata"]["source_ids"] == ["D1:2"]
     finally:
         adapter.close()
+
+def test_adapter_search_prefers_session_observation_when_scores_tie():
+    adapter = _adapter("unit-adapter-session-kind-boost")
+    try:
+        messages = [BenchmarkMessage("user", "Riley archive permit code blue.")]
+        adapter.add(
+            messages=messages,
+            user_id="benchmark-locomo-tiny-1",
+            conversation_id="tiny-conv-1",
+            session_id="session_1",
+            timestamp="2024-05-07",
+            source_ids=["D1:1", "D1:2"],
+            observation_kind="turn",
+        )
+        adapter.add(
+            messages=messages,
+            user_id="benchmark-locomo-tiny-1",
+            conversation_id="tiny-conv-1",
+            session_id="session_1",
+            timestamp="2024-05-07",
+            source_ids=["D1:1", "D1:2"],
+            observation_kind="session",
+        )
+
+        results = adapter.search(
+            "Riley archive permit code blue",
+            "benchmark-locomo-tiny-1",
+            top_k=2,
+        )
+
+        assert results
+        assert results[0]["metadata"]["observation_kind"] == "session"
+        assert results[0]["metadata"]["source_ids"] == ["D1:1", "D1:2"]
+    finally:
+        adapter.close()
