@@ -56,13 +56,25 @@ class KontextBenchmarkAdapter:
         session_id: str,
         timestamp: str | None = None,
         source_ids: list[str] | None = None,
+        observation_kind: str = "turn",
     ) -> BenchmarkAddResult:
         text = _message_text(messages)
         ids = [str(value).strip() for value in (source_ids or []) if str(value).strip()]
         if not ids:
             ids = [str(message.source_id).strip() for message in messages if message.source_id]
         digest = stable_hash(
-            "|".join([self.dataset, self.run_id, user_id, conversation_id, session_id, text, ",".join(ids)])
+            "|".join(
+                [
+                    self.dataset,
+                    self.run_id,
+                    user_id,
+                    conversation_id,
+                    session_id,
+                    observation_kind,
+                    text,
+                    ",".join(ids),
+                ]
+            )
         )
         external_id = f"benchmark:{self.dataset}:{self.run_id}:{digest[:16]}"
         metadata = {
@@ -74,6 +86,7 @@ class KontextBenchmarkAdapter:
             "session_id": session_id,
             "timestamp": timestamp,
             "source_ids": ids,
+            "observation_kind": observation_kind,
             "profile": "benchmark",
             "is_live_memory": False,
             "domains": ["benchmark"],
@@ -104,6 +117,7 @@ class KontextBenchmarkAdapter:
                         "benchmark_dataset": self.dataset,
                         "benchmark_run_id": self.run_id,
                         "source_ids": ids,
+                        "observation_kind": observation_kind,
                     },
                 }
             ]

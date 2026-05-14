@@ -1059,3 +1059,11 @@ Next step:
 - Verification: benchmark adapter tests passed (`11 passed`); full Kontext V2 tests passed (`84 passed`). Real LoCoMo sweep smoke on conversation `0`, max `20` questions, top-k `5,10,20,50` improved to `11/20`, `12/20`, `13/20`, and `14/20` hits. Leak scan on the generated sweep report found no raw sample text/name matches.
 - Finding: the improvement mostly recovered evidence-below-cutoff misses at lower cutoffs; the remaining gap is still evidence-not-retrieved, especially on multi-hop questions. Average benchmark latency rose, so the next pass should focus on more selective candidate filtering instead of more broad per-row scoring.
 - Next step: build a cheaper candidate retrieval stage or session-level summary path that improves recall without pushing benchmark latency up further.
+
+## 2026-05-15 - Kontext V2 session context benchmark pass
+
+- Summary: Added session-level benchmark context rows alongside per-turn evidence rows for sourced LoCoMo sessions. This preserves exact evidence IDs while giving retrieval a session-memory candidate for multi-hop questions.
+- Files touched: `tools/kontext-v2/kontext_v2/benchmarks/adapter.py`, `tools/kontext-v2/kontext_v2/benchmarks/locomo_predict.py`, `tools/kontext-v2/tests/test_benchmark_locomo_predict.py`, `tools/kontext-v2/README.md`, `project_log.md`.
+- Verification: new RED test first failed because sourced sessions only wrote per-turn rows; after implementation it passed. Benchmark-focused tests passed (`12 passed`); full Kontext V2 tests passed (`85 passed`). Larger real LoCoMo sweep on conversations `0,1`, max `50` questions, top-k `5,10,20,50` improved from `27/50`, `30/50`, `34/50`, `37/50` to `40/50`, `41/50`, `44/50`, `45/50`. Leak scan on the generated sweep report found no raw report keys or long raw strings.
+- Finding: session context rows are the biggest local retrieval gain so far. Remaining top-50 misses are 1 open-domain and 4 multi-hop evidence-not-retrieved cases; top-k 50 is now `90%` on the larger slice, with average search latency around `360 ms`.
+- Next step: inspect the remaining 5 misses without exposing raw text, then decide whether to add a lightweight entity/fact extraction layer or stop optimizing the lexical benchmark path and compare against Mem0 on the same slice.

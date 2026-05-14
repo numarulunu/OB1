@@ -3,7 +3,11 @@ from pathlib import Path
 
 import psycopg
 
-from kontext_v2.benchmarks.locomo_predict import run_locomo_predict_only, run_locomo_predict_sweep
+from kontext_v2.benchmarks.locomo_predict import (
+    _add_conversations,
+    run_locomo_predict_only,
+    run_locomo_predict_sweep,
+)
 from kontext_v2.benchmarks.reporting import build_predict_only_report, build_predict_sweep_report, write_report_files
 from kontext_v2.schema import apply_schema
 
@@ -78,6 +82,64 @@ def test_run_locomo_predict_only_real_shape_uses_evidence_and_sanitizes_report(t
     assert "support group" not in output_text
     assert "May 7" not in output_text
     assert "When did Avery" not in output_text
+
+def test_add_conversations_keeps_turn_rows_and_session_context_row_for_sourced_messages():
+    class RecordingAdapter:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def add(
+            self,
+            messages,
+            user_id,
+            conversation_id,
+            session_id,
+            timestamp=None,
+            source_ids=None,
+            observation_kind="turn",
+        ):
+            self.calls.append(
+                {
+                    "messages": messages,
+                    "user_id": user_id,
+                    "conversation_id": conversation_id,
+                    "session_id": session_id,
+                    "timestamp": timestamp,
+                    "source_ids": source_ids,
+                    "observation_kind": observation_kind,
+                }
+            )
+
+    adapter = RecordingAdapter()
+
+    _add_conversations(
+        adapter,
+        [
+            {
+                "user_id": "benchmark-user",
+                "conversation_id": "conv-1",
+                "sessions": [
+                    {
+                        "session_id": "session_1",
+                        "date": "2024-05-07",
+                        "messages": [
+                            {"role": "user", "content": "First sourced turn", "source_id": "D1:1"},
+                            {"role": "assistant", "content": "Second sourced turn", "source_id": "D1:2"},
+                        ],
+                        "source_ids": ["D1:1", "D1:2"],
+                    }
+                ],
+            }
+        ],
+    )
+
+    assert [call["source_ids"] for call in adapter.calls] == [
+        ["D1:1"],
+        ["D1:2"],
+        ["D1:1", "D1:2"],
+    ]
+    assert [call["observation_kind"] for call in adapter.calls] == ["turn", "turn", "session"]
+    assert len(adapter.calls[-1]["messages"]) == 2
 
 def test_sweep_report_tracks_cutoff_misses_without_raw_memory(tmp_path: Path):
     report = build_predict_sweep_report(

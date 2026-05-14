@@ -92,6 +92,17 @@ def _add_conversations(adapter: KontextBenchmarkAdapter, conversations: list[dic
                         session.get("date"),
                         source_ids=[message.source_id] if message.source_id else [],
                     )
+                if len(sourced_messages) > 1:
+                    adapter.add(
+                        messages,
+                        conversation["user_id"],
+                        conversation["conversation_id"],
+                        session["session_id"],
+                        session.get("date"),
+                        source_ids=session.get("source_ids")
+                        or [message.source_id for message in sourced_messages if message.source_id],
+                        observation_kind="session",
+                    )
             else:
                 adapter.add(
                     messages,
