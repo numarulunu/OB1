@@ -86,3 +86,5 @@ python -m kontext_v2.benchmarks.locomo_predict `
 ```
 
 Sweep reports compare several retrieval cutoffs from one max-top-k search. Miss analysis is aggregate-only and classifies misses as evidence below cutoff, evidence not retrieved, expected terms below cutoff, expected terms not retrieved, or no match rule.
+
+The benchmark adapter now uses session-context-aware ranking and temporal/proper-noun boosts for multi-hop evidence. Each benchmark run clears prior benchmark rows for the same run ID before ingesting fresh data, which keeps repeat runs deterministic.

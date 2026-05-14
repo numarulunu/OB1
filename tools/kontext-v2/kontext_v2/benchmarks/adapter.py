@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, Iterable
 
@@ -113,7 +114,7 @@ class KontextBenchmarkAdapter:
             rows = cur.execute(
                 """
                 SELECT external_mem0_id, title, text, metadata, memory_type,
-                       current_status, memory_tier, signal_strength,
+                       current_status, memory_tier, signal_strength, updated_at,
                        0.0::double precision AS rank
                 FROM memories
                 WHERE metadata->>'source' = 'benchmark'
@@ -123,12 +124,29 @@ class KontextBenchmarkAdapter:
                   AND memory_type = 'benchmark_observation'
                   AND current_status = 'benchmark'
                   AND memory_tier = 'cold'
-                ORDER BY updated_at DESC
+                ORDER BY updated_at ASC
                 LIMIT 10000
                 """,
                 (self.dataset, self.run_id, user_id),
             ).fetchall()
-        return [dict(row) for row in rows]
+
+        grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+        for row in rows:
+            item = dict(row)
+            metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+            conversation_key = str(metadata.get("conversation_id") or "")
+            session_key = str(metadata.get("session_id") or "")
+            grouped[(conversation_key, session_key)].append(item)
+
+        enriched: list[dict[str, Any]] = []
+        for group_rows in grouped.values():
+            group_rows.sort(key=lambda row: row.get("updated_at") or 0)
+            texts = [str(row.get("text") or "").strip() for row in group_rows]
+            for index, row in enumerate(group_rows):
+                context_parts = [text for idx, text in enumerate(texts) if idx != index and text]
+                row["context_text"] = " ".join(context_parts)
+                enriched.append(row)
+        return enriched
 
     def search(self, query: str, user_id: str, top_k: int = 200) -> list[dict[str, Any]]:
         limit = min(max(int(top_k or 5), 1), 200)

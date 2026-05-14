@@ -62,6 +62,20 @@ def _fixture_for_run(
         )
     return load_locomo_tiny_fixture(fixture_path)
 
+def _clear_existing_benchmark_rows(conn: psycopg.Connection, dataset: str, run_id: str) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            DELETE FROM memories
+            WHERE metadata->>'source' = 'benchmark'
+              AND metadata->>'benchmark_dataset' = %s
+              AND metadata->>'benchmark_run_id' = %s
+            """,
+            (dataset, run_id),
+        )
+    conn.commit()
+
+
 
 def _add_conversations(adapter: KontextBenchmarkAdapter, conversations: list[dict[str, Any]]) -> None:
     for conversation in conversations:
@@ -144,6 +158,7 @@ def run_locomo_predict_only(
     fixture = _fixture_for_run(fixture_path, dataset_path, dataset_url, conversations, max_questions)
     with psycopg.connect(database_url) as conn:
         apply_schema(conn)
+        _clear_existing_benchmark_rows(conn, fixture["dataset"], run_id)
         adapter = KontextBenchmarkAdapter(conn, fixture["dataset"], run_id)
         _add_conversations(adapter, fixture["conversations"])
         question_results = _run_question_searches(adapter, fixture, top_k)
@@ -170,6 +185,7 @@ def run_locomo_predict_sweep(
     fixture = _fixture_for_run(fixture_path, dataset_path, dataset_url, conversations, max_questions)
     with psycopg.connect(database_url) as conn:
         apply_schema(conn)
+        _clear_existing_benchmark_rows(conn, fixture["dataset"], run_id)
         adapter = KontextBenchmarkAdapter(conn, fixture["dataset"], run_id)
         _add_conversations(adapter, fixture["conversations"])
         question_results = _run_question_searches(adapter, fixture, normalized_top_k[-1])

@@ -47,6 +47,16 @@ def test_load_locomo_real_fixture_normalizes_sessions_and_questions():
 def _adapter(run_id: str) -> KontextBenchmarkAdapter:
     conn = psycopg.connect(os.environ["KONTEXT_V2_DATABASE_URL"])
     apply_schema(conn)
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            DELETE FROM memories
+            WHERE metadata->>'source' = 'benchmark'
+              AND metadata->>'benchmark_run_id' = %s
+            """,
+            (run_id,),
+        )
+    conn.commit()
     return KontextBenchmarkAdapter(conn=conn, dataset="locomo_tiny", run_id=run_id)
 
 
@@ -122,5 +132,36 @@ def test_adapter_search_filters_user_before_top_k_cap():
         results = adapter.search("orchard lantern detail", "target-user", top_k=5)
 
         assert [row["metadata"]["source_ids"] for row in results] == [["D1:1"]]
+    finally:
+        adapter.close()
+
+def test_adapter_search_uses_session_context_for_multi_hop_questions():
+    adapter = _adapter("unit-adapter-session-context")
+    try:
+        adapter.add(
+            messages=[BenchmarkMessage("user", "Caroline went to the LGBTQ support group.")],
+            user_id="benchmark-locomo-tiny-1",
+            conversation_id="tiny-conv-1",
+            session_id="session_1",
+            timestamp="2024-05-07",
+            source_ids=["D1:1"],
+        )
+        adapter.add(
+            messages=[BenchmarkMessage("assistant", "It was on May 7, 2023.")],
+            user_id="benchmark-locomo-tiny-1",
+            conversation_id="tiny-conv-1",
+            session_id="session_1",
+            timestamp="2024-05-07",
+            source_ids=["D1:2"],
+        )
+
+        results = adapter.search(
+            "When did Caroline go to the LGBTQ support group?",
+            "benchmark-locomo-tiny-1",
+            top_k=5,
+        )
+
+        assert results
+        assert results[0]["metadata"]["source_ids"] == ["D1:2"]
     finally:
         adapter.close()

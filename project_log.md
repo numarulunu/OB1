@@ -1052,3 +1052,10 @@ Next step:
 - Verification: focused benchmark tests passed (`10 passed`); full Kontext V2 tests passed (`83 passed`). Real LoCoMo sweep smoke on conversation `0`, max `20` questions, top-k `5,10,20,50` produced `9/20`, `11/20`, `11/20`, and `14/20` evidence hits. Leak scan over the generated sweep report returned no raw sample text/name matches.
 - Finding: Top-k 50 still had 6 evidence-not-retrieved misses. Lower cutoffs additionally had evidence-below-cutoff misses, so the next retrieval work should improve both candidate recall and ranking.
 - Next step: implement retrieval-quality improvements against these miss classes, starting with stronger Postgres candidate recall and scoring boosts for evidence/date/entity terms.
+## 2026-05-15 - Kontext V2 retrieval quality pass
+
+- Summary: Tightened Kontext V2 retrieval for the real LoCoMo benchmark. Added session-context-aware ranking, stronger temporal/date handling, proper-noun boosts, and benchmark-run cleanup before ingest so repeat runs stay deterministic.
+- Files touched: `tools/kontext-v2/kontext_v2/retrieval.py`, `tools/kontext-v2/kontext_v2/benchmarks/adapter.py`, `tools/kontext-v2/kontext_v2/benchmarks/locomo_predict.py`, `tools/kontext-v2/tests/test_benchmark_adapter.py`, `tools/kontext-v2/README.md`, `project_log.md`.
+- Verification: benchmark adapter tests passed (`11 passed`); full Kontext V2 tests passed (`84 passed`). Real LoCoMo sweep smoke on conversation `0`, max `20` questions, top-k `5,10,20,50` improved to `11/20`, `12/20`, `13/20`, and `14/20` hits. Leak scan on the generated sweep report found no raw sample text/name matches.
+- Finding: the improvement mostly recovered evidence-below-cutoff misses at lower cutoffs; the remaining gap is still evidence-not-retrieved, especially on multi-hop questions. Average benchmark latency rose, so the next pass should focus on more selective candidate filtering instead of more broad per-row scoring.
+- Next step: build a cheaper candidate retrieval stage or session-level summary path that improves recall without pushing benchmark latency up further.
