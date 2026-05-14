@@ -1,0 +1,85 @@
+{
+  "dataset": "locomo_tiny",
+  "conversations": [
+    {
+      "conversation_id": "tiny-conv-1",
+      "user_id": "benchmark-locomo-tiny-1",
+      "sessions": [
+        {
+          "session_id": "session_1",
+          "date": "2024-06-01",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Alice: I am planning a Berlin trip for June."
+            },
+            {
+              "role": "assistant",
+              "content": "Bob: Berlin in June should be warm."
+            }
+          ]
+        },
+        {
+          "session_id": "session_2",
+          "date": "2024-06-08",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Alice: Please remember I booked the museum tour for Friday."
+            },
+            {
+              "role": "assistant",
+              "content": "Bob: I will remember the Friday museum tour."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "conversation_id": "tiny-conv-2",
+      "user_id": "benchmark-locomo-tiny-2",
+      "sessions": [
+        {
+          "session_id": "session_1",
+          "date": "2024-07-03",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Mira: My cello recital is at the old library."
+            },
+            {
+              "role": "assistant",
+              "content": "Noah: The recital location is the old library."
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "questions": [
+    {
+      "question_id": "tiny-q-1",
+      "conversation_id": "tiny-conv-1",
+      "user_id": "benchmark-locomo-tiny-1",
+      "question": "Where is Alice planning to travel in June?",
+      "category": "single-hop",
+      "expected_terms": ["berlin", "june"]
+    },
+    {
+      "question_id": "tiny-q-2",
+      "conversation_id": "tiny-conv-1",
+      "user_id": "benchmark-locomo-tiny-1",
+      "question": "What tour did Alice book for Friday?",
+      "category": "temporal",
+      "expected_terms": ["museum", "friday"]
+    },
+    {
+      "question_id": "tiny-q-3",
+      "conversation_id": "tiny-conv-2",
+      "user_id": "benchmark-locomo-tiny-2",
+      "question": "Where is Mira's cello recital?",
+      "category": "single-hop",
+      "expected_terms": ["old", "library"]
+    }
+  ]
+}
