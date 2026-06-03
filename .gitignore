@@ -28,3 +28,8 @@ deno.lock
 tools/kontext-v2/benchmark-results/
 benchmark-results/
 tools/kontext-v2/benchmark-data/
+tools/kontext-v2/_prebatch_*/
+
+# Local QA scratch and timestamped backup debris
+_qa_*/
+*.bak-*

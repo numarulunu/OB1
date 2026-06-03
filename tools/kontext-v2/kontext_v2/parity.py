@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from typing import Any
 
 from kontext_v2.importer import mem0_source_hash
+
+STABLE_FRESHNESS_METADATA_KEYS = ("domains", "memory_type", "current_status", "memory_tier", "signal_strength")
 
 
 def _mem0_id(row: dict[str, Any]) -> str:
@@ -14,6 +17,42 @@ def _mem0_id(row: dict[str, Any]) -> str:
 def _metadata(row: dict[str, Any]) -> dict[str, Any]:
     metadata = row.get("metadata") or {}
     return metadata if isinstance(metadata, dict) else {}
+
+
+def _fallback_value(source: Any, key: str) -> Any:
+    if isinstance(source, dict):
+        return source.get(key)
+    return getattr(source, key, None)
+
+
+def _stable_freshness_metadata(metadata: dict[str, Any], source: Any) -> dict[str, Any]:
+    stable: dict[str, Any] = {}
+    raw_domains = metadata.get("domains") or _fallback_value(source, "domains") or []
+    domains = sorted({str(value).strip() for value in raw_domains if str(value).strip()})
+    if domains:
+        stable["domains"] = domains
+
+    for key in STABLE_FRESHNESS_METADATA_KEYS:
+        if key in {"domains", "signal_strength"}:
+            continue
+        value = metadata.get(key) or _fallback_value(source, key)
+        if not value and key in {"current_status", "memory_tier"}:
+            value = "active"
+        if value:
+            stable[key] = str(value)
+
+    signal_strength = metadata.get("signal_strength")
+    if signal_strength is None:
+        signal_strength = _fallback_value(source, "signal_strength")
+    if signal_strength is not None:
+        try:
+            numeric = float(signal_strength)
+        except (TypeError, ValueError):
+            stable["signal_strength"] = str(signal_strength)
+        else:
+            if math.isfinite(numeric):
+                stable["signal_strength"] = numeric
+    return stable
 
 
 def _domain_set(row: dict[str, Any]) -> set[str]:
@@ -36,11 +75,12 @@ def _freshness_hash(text: str, metadata: dict[str, Any]) -> str:
 
 
 def _mem0_freshness_hash(row: dict[str, Any]) -> str:
-    return _freshness_hash(_memory_text(row), _metadata(row))
+    return _freshness_hash(_memory_text(row), _stable_freshness_metadata(_metadata(row), row))
 
 
 def _kontext_freshness_hash(memory: Any) -> str:
-    return _freshness_hash(getattr(memory, "text", ""), getattr(memory, "metadata", {}) or {})
+    metadata = getattr(memory, "metadata", {}) or {}
+    return _freshness_hash(getattr(memory, "text", ""), _stable_freshness_metadata(metadata, memory))
 
 
 def compare_search_results(

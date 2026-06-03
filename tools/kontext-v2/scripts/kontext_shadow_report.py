@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 from __future__ import annotations
 
 import json
@@ -20,6 +20,15 @@ PYTHONPATH = str(ROOT / "src")
 SYNC_CAP = int(os.environ.get("KONTEXT_SHADOW_SYNC_CAP", "25"))
 TOP_K = int(os.environ.get("KONTEXT_SHADOW_TOP_K", "5"))
 PROFILE = os.environ.get("KONTEXT_SHADOW_PROFILE", "codex")
+EXACT_ID_FRESHNESS_LIMIT = int(os.environ.get("KONTEXT_EXACT_ID_FRESHNESS_LIMIT", "250"))
+EXACT_ID_FETCH_TIMEOUT = int(os.environ.get("KONTEXT_EXACT_ID_FETCH_TIMEOUT", "15"))
+EXACT_ID_PROCESS_TIMEOUT = int(os.environ.get("KONTEXT_EXACT_ID_PROCESS_TIMEOUT", "240"))
+SYNC_REFRESH_EXISTING_LIMIT = int(
+    os.environ.get("KONTEXT_SHADOW_SYNC_REFRESH_EXISTING_LIMIT", str(EXACT_ID_FRESHNESS_LIMIT))
+)
+EXACT_ID_FRESHNESS_STATE_FILE = Path(
+    os.environ.get("KONTEXT_EXACT_ID_FRESHNESS_STATE_FILE", str(REPORT_DIR / "exact-id-freshness-state.json"))
+)
 
 ENDPOINTS = {
     "kontext_docs": "http://127.0.0.1:8200/docs",
@@ -76,6 +85,42 @@ def redact(value: Any) -> Any:
     if isinstance(value, list):
         return [redact(item) for item in value]
     return value
+
+
+def safe_int(value: Any, default: int = 0, *, minimum: int = 0, maximum: int = 1_000_000) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = int(default)
+    return min(max(parsed, minimum), maximum)
+
+
+def read_exact_id_freshness_offset() -> int:
+    if "KONTEXT_EXACT_ID_FRESHNESS_OFFSET" in os.environ:
+        return safe_int(os.environ.get("KONTEXT_EXACT_ID_FRESHNESS_OFFSET"))
+    try:
+        payload = json.loads(EXACT_ID_FRESHNESS_STATE_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return 0
+    if not isinstance(payload, dict):
+        return 0
+    return safe_int(payload.get("next_scan_offset"))
+
+
+def write_exact_id_freshness_state(payload: dict[str, Any]) -> None:
+    next_scan_offset = payload.get("next_scan_offset")
+    if next_scan_offset is None:
+        return
+    state = {
+        "updated_at": utc_now().isoformat().replace("+00:00", "Z"),
+        "last_scan_offset": safe_int(payload.get("scan_offset")),
+        "next_scan_offset": safe_int(next_scan_offset),
+        "limit": safe_int(payload.get("scan_limit"), EXACT_ID_FRESHNESS_LIMIT),
+        "checked": safe_int(payload.get("checked")),
+        "total_rows": safe_int(payload.get("total_rows")),
+    }
+    EXACT_ID_FRESHNESS_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    EXACT_ID_FRESHNESS_STATE_FILE.write_text(json.dumps(state, sort_keys=True), encoding="utf-8")
 
 
 def http_json(url: str, timeout: int = 15) -> dict[str, Any]:
@@ -161,6 +206,15 @@ def summarize_reliability(payload: dict[str, Any]) -> dict[str, Any]:
                 "shared_first_cases",
                 "shared_any_rate",
                 "shared_first_rate",
+                "left_first_overlap_mrr",
+                "right_first_overlap_mrr",
+                "mean_first_overlap_mrr",
+                "left_first_satisfying_mrr",
+                "right_first_satisfying_mrr",
+                "mean_first_satisfying_mrr",
+                "left_better_satisfying_cases",
+                "right_better_satisfying_cases",
+                "equal_satisfying_cases",
                 "no_overlap_cases",
             )
             if key in comparison
@@ -209,10 +263,12 @@ def run_sync_dry_run(env_values: dict[str, str]) -> dict[str, Any]:
         base_url = public_base_url
     env["MEM0_API_BASE_URL"] = base_url
     env["MEM0_BASE_URL"] = base_url
+    env["MEM0_LEXICAL_DATABASE_URL"] = ""
     required = ["MEM0_API_KEY", "MEM0_USER_ID", "MEM0_BASE_URL"]
     missing = [name for name in required if not env.get(name)]
     if missing:
         return {"ok": False, "error": "missing_env", "missing": missing}
+    refresh_existing_offset = read_exact_id_freshness_offset()
     cmd = [
         "docker",
         "compose",
@@ -228,12 +284,18 @@ def run_sync_dry_run(env_values: dict[str, str]) -> dict[str, Any]:
         "MEM0_BASE_URL",
         "-e",
         "MEM0_API_BASE_URL",
+        "-e",
+        "MEM0_LEXICAL_DATABASE_URL",
         "kontext",
         "python",
         "-m",
         "kontext_v2.sync_cli",
         "--cap",
         str(SYNC_CAP),
+        "--refresh-existing-limit",
+        str(SYNC_REFRESH_EXISTING_LIMIT),
+        "--refresh-existing-offset",
+        str(refresh_existing_offset),
     ]
     started = time.perf_counter()
     proc = subprocess.run(cmd, cwd=str(ROOT), env=env, text=True, capture_output=True, timeout=180)
@@ -246,6 +308,7 @@ def run_sync_dry_run(env_values: dict[str, str]) -> dict[str, Any]:
         return {"ok": False, "returncode": proc.returncode, "latency_ms": elapsed_ms, "error": "sync_dry_run_invalid_json"}
     report = payload.get("report") if isinstance(payload.get("report"), dict) else {}
     sync = payload.get("sync") if isinstance(payload.get("sync"), dict) else {}
+    sync_metadata = sync.get("metadata") if isinstance(sync.get("metadata"), dict) else {}
     summary = {
         "ok": bool(payload.get("ok")),
         "source": payload.get("source"),
@@ -255,6 +318,12 @@ def run_sync_dry_run(env_values: dict[str, str]) -> dict[str, Any]:
         "source_rows_seen": payload.get("source_rows_seen"),
         "report": {key: report.get(key) for key in ("created", "updated", "unchanged", "skipped") if key in report},
         "sync": {key: sync.get(key) for key in ("id", "status", "dry_run", "rows_seen", "created", "updated", "unchanged", "skipped", "started_at", "finished_at") if key in sync},
+        "refresh_existing": {
+            "limit": sync_metadata.get("refresh_existing_limit"),
+            "offset": sync_metadata.get("refresh_existing_offset"),
+            "fetched": sync_metadata.get("refreshed_existing_rows"),
+            "stale": sync_metadata.get("refreshed_stale_rows"),
+        },
         "latency_ms": elapsed_ms,
     }
     return redact(summary)
@@ -274,14 +343,18 @@ def run_exact_id_freshness(env_values: dict[str, str]) -> dict[str, Any]:
     missing = [name for name in ("MEM0_API_KEY", "MEM0_USER_ID", "MEM0_BASE_URL") if not env.get(name)]
     if missing:
         return {"ok": False, "error": "missing_env", "missing": missing}
+    scan_offset = read_exact_id_freshness_offset()
     cmd = [
         "docker", "compose", "-f", str(ROOT / "docker-compose.yml"),
         "exec", "-T", "-e", "MEM0_API_KEY", "-e", "MEM0_USER_ID",
         "-e", "MEM0_BASE_URL", "-e", "MEM0_API_BASE_URL",
         "kontext", "python", "-m", "kontext_v2.exact_id_freshness_cli",
+        "--limit", str(EXACT_ID_FRESHNESS_LIMIT),
+        "--offset", str(scan_offset),
+        "--fetch-timeout", str(EXACT_ID_FETCH_TIMEOUT),
     ]
     started = time.perf_counter()
-    proc = subprocess.run(cmd, cwd=str(ROOT), env=env, text=True, capture_output=True, timeout=240)
+    proc = subprocess.run(cmd, cwd=str(ROOT), env=env, text=True, capture_output=True, timeout=EXACT_ID_PROCESS_TIMEOUT)
     elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
     if proc.returncode not in {0, 2}:
         return {"ok": False, "returncode": proc.returncode, "latency_ms": elapsed_ms, "error": "exact_id_freshness_failed"}
@@ -290,6 +363,8 @@ def run_exact_id_freshness(env_values: dict[str, str]) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {"ok": False, "returncode": proc.returncode, "latency_ms": elapsed_ms, "error": "exact_id_freshness_invalid_json"}
     payload["latency_ms"] = elapsed_ms
+    if payload.get("ok"):
+        write_exact_id_freshness_state(payload)
     return redact(payload)
 
 
@@ -326,6 +401,7 @@ def main() -> int:
             "root": str(ROOT),
             "mode": "shadow_read_only_mem0_source_of_truth",
             "sync_cap": SYNC_CAP,
+            "sync_refresh_existing_limit": SYNC_REFRESH_EXISTING_LIMIT,
             "top_k": TOP_K,
             "profile": PROFILE,
             "endpoints": endpoints,
@@ -357,4 +433,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

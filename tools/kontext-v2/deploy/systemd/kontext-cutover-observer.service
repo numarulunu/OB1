@@ -1,0 +1,11 @@
+[Unit]
+Description=Kontext cutover observer
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/kontext
+ExecStart=/opt/kontext/scripts/run_kontext_cutover_observer.sh
+Nice=5
