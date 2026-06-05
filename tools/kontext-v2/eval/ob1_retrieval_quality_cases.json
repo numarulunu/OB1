@@ -1,0 +1,256 @@
+{
+  "cases": [
+    {
+      "name": "protected-family-origin-trust",
+      "group": "protected_history",
+      "query": "family origin trust pattern from father history",
+      "expected_domains": ["family", "psychology", "relationships"],
+      "expected_memory_types": ["formative_event", "relationship_pattern", "psychology_pattern", "trauma_context", "identity_shaping"],
+      "require_protected_history": true,
+      "max_rank": 5
+    },
+    {
+      "name": "protected-childhood-attachment",
+      "group": "protected_history",
+      "query": "childhood attachment pattern with mother history",
+      "expected_domains": ["family", "psychology", "relationships"],
+      "expected_memory_types": ["formative_event", "relationship_pattern", "psychology_pattern", "trauma_context", "identity_shaping"],
+      "require_protected_history": true,
+      "max_rank": 5
+    },
+    {
+      "name": "protected-romanian-family-history",
+      "group": "protected_history",
+      "query": "istoric familie copilarie atasament psihologie",
+      "expected_domains": ["family", "psychology", "relationships"],
+      "expected_memory_types": ["formative_event", "relationship_pattern", "psychology_pattern", "trauma_context", "identity_shaping"],
+      "require_protected_history": true,
+      "max_rank": 5
+    },
+    {
+      "name": "protected-current-trust-background",
+      "group": "protected_history",
+      "query": "old autobiographical history explaining current trust reactions",
+      "expected_domains": ["family", "psychology", "relationships"],
+      "expected_memory_types": ["formative_event", "relationship_pattern", "psychology_pattern", "trauma_context", "identity_shaping"],
+      "require_protected_history": true,
+      "max_rank": 5
+    },
+    {
+      "name": "protected-relationship-trauma",
+      "group": "protected_history",
+      "query": "relationship trauma attachment history",
+      "expected_domains": ["family", "psychology", "relationships"],
+      "expected_memory_types": ["formative_event", "relationship_pattern", "psychology_pattern", "trauma_context", "identity_shaping"],
+      "require_protected_history": true,
+      "max_rank": 5
+    },
+    {
+      "name": "protected-shame-identity",
+      "group": "protected_history",
+      "query": "psychology shame guilt identity pattern history",
+      "expected_domains": ["family", "psychology", "relationships"],
+      "expected_memory_types": ["formative_event", "relationship_pattern", "psychology_pattern", "trauma_context", "identity_shaping"],
+      "require_protected_history": true,
+      "max_rank": 5
+    },
+    {
+      "name": "protected-formative-anxiety",
+      "group": "protected_history",
+      "query": "formative event family origin anxiety context",
+      "expected_domains": ["family", "psychology", "relationships"],
+      "expected_memory_types": ["formative_event", "relationship_pattern", "psychology_pattern", "trauma_context", "identity_shaping"],
+      "require_protected_history": true,
+      "max_rank": 5
+    },
+    {
+      "name": "protected-past-relationship-pattern",
+      "group": "protected_history",
+      "query": "past relationship escalation trust pattern",
+      "expected_domains": ["family", "psychology", "relationships"],
+      "expected_memory_types": ["formative_event", "relationship_pattern", "psychology_pattern", "trauma_context", "identity_shaping"],
+      "require_protected_history": true,
+      "max_rank": 5
+    },
+    {
+      "name": "protected-boundary-history",
+      "group": "protected_history",
+      "query": "boundary attachment wound historical context",
+      "expected_domains": ["family", "psychology", "relationships"],
+      "expected_memory_types": ["formative_event", "relationship_pattern", "psychology_pattern", "trauma_context", "identity_shaping"],
+      "require_protected_history": true,
+      "max_rank": 5
+    },
+    {
+      "name": "protected-family-role-pattern",
+      "group": "protected_history",
+      "query": "family origin sibling role pattern psychology",
+      "expected_domains": ["family", "psychology", "relationships"],
+      "expected_memory_types": ["formative_event", "relationship_pattern", "psychology_pattern", "trauma_context", "identity_shaping"],
+      "require_protected_history": true,
+      "max_rank": 5
+    },
+    {
+      "name": "protected-trauma-identity",
+      "group": "protected_history",
+      "query": "historical trauma context identity development",
+      "expected_domains": ["family", "psychology", "relationships"],
+      "expected_memory_types": ["formative_event", "relationship_pattern", "psychology_pattern", "trauma_context", "identity_shaping"],
+      "require_protected_history": true,
+      "max_rank": 5
+    },
+    {
+      "name": "protected-relationship-psychology",
+      "group": "protected_history",
+      "query": "relationship psychology protected autobiographical history",
+      "expected_domains": ["family", "psychology", "relationships"],
+      "expected_memory_types": ["formative_event", "relationship_pattern", "psychology_pattern", "trauma_context", "identity_shaping"],
+      "require_protected_history": true,
+      "max_rank": 5
+    },
+    {
+      "name": "project-kontext-cutover-status",
+      "group": "project_continuity",
+      "query": "Kontext cutover status Mem0 rollback decision",
+      "expected_domains": ["ai", "systems", "infrastructure", "workflow"],
+      "expected_memory_types": ["project_state", "architecture_decision", "decision", "workflow_state", "policy", "preference"],
+      "max_rank": 10
+    },
+    {
+      "name": "project-codex-claude-hooks",
+      "group": "project_continuity",
+      "query": "Codex Claude hooks Kontext primary memory policy",
+      "expected_domains": ["ai", "systems", "infrastructure", "workflow"],
+      "expected_memory_types": ["project_state", "architecture_decision", "decision", "workflow_state", "policy", "preference"],
+      "max_rank": 10
+    },
+    {
+      "name": "project-claude-custom-connector",
+      "group": "project_continuity",
+      "query": "MCP connector Claude Code Kontext token setup",
+      "expected_domains": ["ai", "systems", "infrastructure", "workflow"],
+      "expected_memory_types": ["project_state", "architecture_decision", "decision", "workflow_state", "policy", "preference"],
+      "max_rank": 10
+    },
+    {
+      "name": "project-dashboard-body-strip",
+      "group": "project_continuity",
+      "query": "dashboard raw body privacy body_hash body_len",
+      "expected_domains": ["ai", "systems", "infrastructure", "workflow"],
+      "expected_memory_types": ["project_state", "architecture_decision", "decision", "workflow_state", "policy", "preference"],
+      "max_rank": 10
+    },
+    {
+      "name": "project-shadow-telemetry",
+      "group": "project_continuity",
+      "query": "retrieval shadow telemetry scorer version result metrics",
+      "expected_domains": ["ai", "systems", "infrastructure", "workflow"],
+      "expected_memory_types": ["project_state", "architecture_decision", "decision", "workflow_state", "policy", "preference"],
+      "max_rank": 10
+    },
+    {
+      "name": "project-judged-benchmark-floor",
+      "group": "project_continuity",
+      "query": "judged benchmark thirty question gate",
+      "expected_domains": ["ai", "systems", "infrastructure", "workflow"],
+      "expected_memory_types": ["project_state", "architecture_decision", "decision", "workflow_state", "policy", "preference"],
+      "max_rank": 10
+    },
+    {
+      "name": "project-cutover-observer-freshness",
+      "group": "project_continuity",
+      "query": "cutover observer freshness stale scorecard readiness",
+      "expected_domains": ["ai", "systems", "infrastructure", "workflow"],
+      "expected_memory_types": ["project_state", "architecture_decision", "decision", "workflow_state", "policy", "preference"],
+      "max_rank": 10
+    },
+    {
+      "name": "project-observations-continuity",
+      "group": "project_continuity",
+      "query": "project observations continuity search timeline file context",
+      "expected_domains": ["ai", "systems", "infrastructure", "workflow"],
+      "expected_memory_types": ["project_state", "architecture_decision", "decision", "workflow_state", "policy", "preference"],
+      "max_rank": 10
+    },
+    {
+      "name": "project-mcp-canary-dry-run",
+      "group": "project_continuity",
+      "query": "MCP write dry run canary profile writes applied",
+      "expected_domains": ["ai", "systems", "infrastructure", "workflow"],
+      "expected_memory_types": ["project_state", "architecture_decision", "decision", "workflow_state", "policy", "preference"],
+      "max_rank": 10
+    },
+    {
+      "name": "project-context-mode-integration",
+      "group": "project_continuity",
+      "query": "Context Mode integration Kontext dashboard link",
+      "expected_domains": ["ai", "systems", "infrastructure", "workflow"],
+      "expected_memory_types": ["project_state", "architecture_decision", "decision", "workflow_state", "policy", "preference"],
+      "max_rank": 10
+    },
+    {
+      "name": "project-categories-dashboard",
+      "group": "project_continuity",
+      "query": "categories dashboard backend folder management",
+      "expected_domains": ["ai", "systems", "infrastructure", "workflow"],
+      "expected_memory_types": ["project_state", "architecture_decision", "decision", "workflow_state", "policy", "preference"],
+      "max_rank": 10
+    },
+    {
+      "name": "project-protected-retention-code",
+      "group": "project_continuity",
+      "query": "protected history retention code retention policy",
+      "expected_domains": ["ai", "systems", "infrastructure", "workflow"],
+      "expected_memory_types": ["project_state", "architecture_decision", "decision", "workflow_state", "policy", "preference"],
+      "max_rank": 10
+    },
+    {
+      "name": "project-topk-parity-sweep",
+      "group": "project_continuity",
+      "query": "top k fifty retrieval parity sweep",
+      "expected_domains": ["ai", "systems", "infrastructure", "workflow"],
+      "expected_memory_types": ["project_state", "architecture_decision", "decision", "workflow_state", "policy", "preference"],
+      "max_rank": 10
+    },
+    {
+      "name": "project-vps-deploy-rollback",
+      "group": "project_continuity",
+      "query": "VPS deploy rollback backup Kontext worker",
+      "expected_domains": ["ai", "systems", "infrastructure", "workflow"],
+      "expected_memory_types": ["project_state", "architecture_decision", "decision", "workflow_state", "policy", "preference"],
+      "max_rank": 10
+    },
+    {
+      "name": "project-embedding-placeholder",
+      "group": "project_continuity",
+      "query": "embedding vector placeholder dirty metadata",
+      "expected_domains": ["ai", "systems", "infrastructure", "workflow"],
+      "expected_memory_types": ["project_state", "architecture_decision", "decision", "workflow_state", "policy", "preference"],
+      "max_rank": 10
+    },
+    {
+      "name": "project-beam-hard-slice",
+      "group": "project_continuity",
+      "query": "BEAM hard slice top k fifty gate",
+      "expected_domains": ["ai", "systems", "infrastructure", "workflow"],
+      "expected_memory_types": ["project_state", "architecture_decision", "decision", "workflow_state", "policy", "preference"],
+      "max_rank": 10
+    },
+    {
+      "name": "project-official-benchmark-predict-only",
+      "group": "project_continuity",
+      "query": "LoCoMo LongMemEval predict only benchmark",
+      "expected_domains": ["ai", "systems", "infrastructure", "workflow"],
+      "expected_memory_types": ["project_state", "architecture_decision", "decision", "workflow_state", "policy", "preference"],
+      "max_rank": 10
+    },
+    {
+      "name": "project-dream-cleanup-cli",
+      "group": "project_continuity",
+      "query": "dream cleanup CLI maintenance flags",
+      "expected_domains": ["ai", "systems", "infrastructure", "workflow"],
+      "expected_memory_types": ["project_state", "architecture_decision", "decision", "workflow_state", "policy", "preference"],
+      "max_rank": 10
+    }
+  ]
+}

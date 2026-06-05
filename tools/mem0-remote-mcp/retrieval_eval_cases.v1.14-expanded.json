@@ -1,0 +1,559 @@
+{
+  "cases": [
+    {
+      "name": "ai-memory-architecture",
+      "query": "What is the current architecture of my AI memory system?",
+      "expected_domains": [
+        "ai",
+        "systems",
+        "infrastructure"
+      ],
+      "expected_memory_types": [
+        "architecture_decision",
+        "decision",
+        "project_state"
+      ],
+      "min_results": 1
+    },
+    {
+      "name": "kontext-mem0-source-of-truth",
+      "query": "Is Mem0 or Kontext the source of truth for my memory system right now?",
+      "expected_domains": [
+        "ai",
+        "systems",
+        "workflow"
+      ],
+      "expected_memory_types": [
+        "architecture_decision",
+        "decision",
+        "project_state"
+      ],
+      "min_results": 1
+    },
+    {
+      "name": "kontext-shadow-read-only-mode",
+      "query": "What is Kontext V2 shadow read-only mode and how is it synced from Mem0?",
+      "expected_domains": [
+        "ai",
+        "systems",
+        "infrastructure"
+      ],
+      "expected_memory_types": [
+        "architecture_decision",
+        "decision",
+        "project_state"
+      ],
+      "min_results": 1
+    },
+    {
+      "name": "mem0-ingestion-pipeline",
+      "query": "How should the Mem0 MCP ingestion pipeline work across Codex Claude and ChatGPT?",
+      "expected_domains": [
+        "ai",
+        "systems",
+        "workflow"
+      ],
+      "expected_memory_types": [
+        "architecture_decision",
+        "project_state",
+        "workflow"
+      ],
+      "min_results": 1
+    },
+    {
+      "name": "agent-first-memory-writes",
+      "query": "What is the agent-first memory write policy for Codex and Claude?",
+      "expected_domains": [
+        "ai",
+        "systems",
+        "workflow"
+      ],
+      "expected_memory_types": [
+        "decision",
+        "preference",
+        "project_state",
+        "workflow"
+      ],
+      "min_results": 1
+    },
+    {
+      "name": "hooks-context-efficiency",
+      "query": "How should hooks avoid cluttering the context window while still reminding agents about memory?",
+      "expected_domains": [
+        "ai",
+        "systems",
+        "workflow"
+      ],
+      "expected_memory_types": [
+        "decision",
+        "preference",
+        "project_state",
+        "workflow"
+      ],
+      "min_results": 1
+    },
+    {
+      "name": "qwen-cost-hot-path",
+      "query": "Why did we remove Qwen automatic extraction from the hot path and keep memory writes agent-first?",
+      "expected_domains": [
+        "ai",
+        "systems",
+        "workflow"
+      ],
+      "expected_memory_types": [
+        "architecture_decision",
+        "decision",
+        "project_state"
+      ],
+      "min_results": 1
+    },
+    {
+      "name": "dream-cleanup-cli-policy",
+      "query": "How does dream cleanup work for Mem0 and who approves it?",
+      "expected_domains": [
+        "ai",
+        "systems",
+        "workflow"
+      ],
+      "expected_memory_types": [
+        "decision",
+        "policy",
+        "project_state",
+        "workflow"
+      ],
+      "min_results": 1
+    },
+    {
+      "name": "memory-tier-decay-ranking",
+      "query": "How do active historical and cold memory tiers affect retrieval ranking and decay?",
+      "expected_domains": [
+        "ai",
+        "systems",
+        "workflow"
+      ],
+      "expected_memory_types": [
+        "architecture_decision",
+        "decision",
+        "policy",
+        "project_state"
+      ],
+      "min_results": 1
+    },
+    {
+      "name": "date-aware-conflict-resolution",
+      "query": "How should newer dated memory entries win over stale conflicting entries?",
+      "expected_domains": [
+        "ai",
+        "systems",
+        "workflow"
+      ],
+      "expected_memory_types": [
+        "architecture_decision",
+        "decision",
+        "project_state"
+      ],
+      "min_results": 1
+    },
+    {
+      "name": "vps-memory-infrastructure",
+      "query": "How is the Mem0 and Kontext Docker VPS setup wired?",
+      "expected_domains": [
+        "ai",
+        "systems",
+        "infrastructure"
+      ],
+      "expected_memory_types": [
+        "architecture_decision",
+        "decision",
+        "project_state"
+      ],
+      "min_results": 1
+    },
+    {
+      "name": "vps-deploy-preserve-env-data",
+      "query": "What must be preserved during Mem0 and Kontext VPS deploys?",
+      "expected_domains": [
+        "ai",
+        "systems",
+        "infrastructure",
+        "workflow"
+      ],
+      "expected_memory_types": [
+        "decision",
+        "project_state",
+        "workflow"
+      ],
+      "min_results": 1
+    },
+    {
+      "name": "kontext-dashboard-categories",
+      "query": "What is the status of Kontext dashboard categories and dossiers?",
+      "expected_domains": [
+        "ai",
+        "systems",
+        "workflow"
+      ],
+      "expected_memory_types": [
+        "architecture_decision",
+        "decision",
+        "project_state"
+      ],
+      "min_results": 1
+    },
+    {
+      "name": "kontext-dashboard-declutter",
+      "query": "How should the Kontext dashboard be simplified into simple mode with quieter advanced controls?",
+      "expected_domains": [
+        "ai",
+        "systems",
+        "workflow"
+      ],
+      "expected_memory_types": [
+        "decision",
+        "preference",
+        "project_state"
+      ],
+      "min_results": 1
+    },
+    {
+      "name": "claude-design-dashboard-branding",
+      "query": "What happened with the Claude design redesign for the Kontext dashboard frontend?",
+      "expected_domains": [
+        "ai",
+        "systems",
+        "workflow"
+      ],
+      "expected_memory_types": [
+        "decision",
+        "preference",
+        "project_state"
+      ],
+      "min_results": 1
+    },
+    {
+      "name": "retrieval-eval-parity-status",
+      "query": "Where do the Mem0 versus Kontext retrieval evals stand right now?",
+      "expected_domains": [
+        "ai",
+        "systems",
+        "workflow",
+        "infrastructure"
+      ],
+      "expected_memory_types": [
+        "architecture_decision",
+        "decision",
+        "project_state"
+      ],
+      "min_results": 1
+    },
+    {
+      "name": "locomo-benchmark-status",
+      "query": "What is the status of the Kontext LoCoMo benchmark adapter work?",
+      "expected_domains": [
+        "ai",
+        "systems",
+        "projects"
+      ],
+      "expected_memory_types": [
+        "decision",
+        "project_state"
+      ],
+      "min_results": 1
+    },
+    {
+      "name": "exact-id-fetch-parity",
+      "query": "What is the status of exact ID and fetch parity between Kontext and Mem0?",
+      "expected_domains": [
+        "ai",
+        "systems",
+        "workflow"
+      ],
+      "expected_memory_types": [
+        "architecture_decision",
+        "decision",
+        "project_state"
+      ],
+      "min_results": 1
+    },
+    {
+      "name": "ai-agent-preferences",
+      "query": "What are my preferences for AI agents memory and automation systems?",
+      "expected_domains": [
+        "ai",
+        "systems",
+        "workflow"
+      ],
+      "expected_memory_types": [
+        "decision",
+        "preference",
+        "project_state"
+      ],
+      "min_results": 1
+    },
+    {
+      "name": "codex-claude-roles",
+      "query": "How do I use Codex and Claude in my workflow?",
+      "expected_domains": [
+        "ai",
+        "systems",
+        "workflow"
+      ],
+      "expected_memory_types": [
+        "decision",
+        "preference",
+        "project_state",
+        "workflow"
+      ],
+      "min_results": 1
+    },
+    {
+      "name": "project-continuity-compaction",
+      "query": "How should project continuity survive compaction without old chat history?",
+      "expected_domains": [
+        "ai",
+        "systems",
+        "workflow"
+      ],
+      "expected_memory_types": [
+        "architecture_decision",
+        "decision",
+        "project_state",
+        "workflow"
+      ],
+      "min_results": 1
+    },
+    {
+      "name": "finance-pfa-context",
+      "query": "What is my finance PFA context for taxes business money and accounting?",
+      "expected_domains": [
+        "finance",
+        "business"
+      ],
+      "expected_memory_types": [
+        "decision",
+        "finance_context",
+        "project_state"
+      ],
+      "min_results": 1
+    },
+    {
+      "name": "finance-accounting-app-state",
+      "query": "What is the current state of the Finance app accounting workflow?",
+      "expected_domains": [
+        "finance",
+        "business",
+        "workflow"
+      ],
+      "expected_memory_types": [
+        "decision",
+        "finance_context",
+        "project_state",
+        "workflow"
+      ],
+      "min_results": 1
+    },
+    {
+      "name": "opera-funding-goal",
+      "query": "What is my opera funding goal and career context?",
+      "expected_domains": [
+        "opera",
+        "business",
+        "finance"
+      ],
+      "expected_memory_types": [
+        "career_context",
+        "goal",
+        "project_state"
+      ],
+      "min_results": 1
+    },
+    {
+      "name": "own-voice-career-context",
+      "query": "What is my own voice and opera career context?",
+      "expected_domains": [
+        "vocality",
+        "opera"
+      ],
+      "expected_memory_types": [
+        "career_context",
+        "decision",
+        "project_state",
+        "voice_profile",
+        "workflow"
+      ],
+      "min_results": 1
+    },
+    {
+      "name": "vocality-current-state",
+      "query": "What is the current state of Vocality and my student migration workflow?",
+      "expected_domains": [
+        "business",
+        "vocality",
+        "workflow"
+      ],
+      "expected_memory_types": [
+        "business_context",
+        "decision",
+        "project_state",
+        "workflow"
+      ],
+      "min_results": 1
+    },
+    {
+      "name": "vocality-branding-design",
+      "query": "What are my Vocality branding and design preferences?",
+      "expected_domains": [
+        "vocality",
+        "business",
+        "workflow"
+      ],
+      "expected_memory_types": [
+        "business_context",
+        "career_context",
+        "decision",
+        "preference",
+        "project_state"
+      ],
+      "min_results": 1
+    },
+    {
+      "name": "vocality-course-architecture",
+      "query": "How should the Vocality course curriculum and lessons be structured?",
+      "expected_domains": [
+        "vocality",
+        "business",
+        "workflow"
+      ],
+      "expected_memory_types": [
+        "business_context",
+        "career_context",
+        "decision",
+        "preference",
+        "project_state",
+        "workflow"
+      ],
+      "min_results": 1
+    },
+    {
+      "name": "melocchi-pipeline-status",
+      "query": "What is the status of the Melocchi session extraction pipeline?",
+      "expected_domains": [
+        "vocality",
+        "opera",
+        "workflow"
+      ],
+      "expected_memory_types": [
+        "decision",
+        "project_state",
+        "workflow"
+      ],
+      "min_results": 1
+    },
+    {
+      "name": "psychology-execution-patterns",
+      "query": "What are my psychology execution patterns and workflow blocks?",
+      "expected_domains": [
+        "psychology",
+        "workflow"
+      ],
+      "expected_memory_types": [
+        "execution_pattern",
+        "psychology_pattern",
+        "workflow"
+      ],
+      "min_results": 1
+    },
+    {
+      "name": "relationship-patterns-luiza",
+      "query": "What relationship patterns around Luiza are important context?",
+      "expected_domains": [
+        "relationships",
+        "psychology"
+      ],
+      "expected_memory_types": [
+        "clinical_context",
+        "formative_event",
+        "relationship_pattern"
+      ],
+      "min_results": 1
+    },
+    {
+      "name": "mother-family-origin-patterns",
+      "query": "What mother and family origin patterns matter for psychology context?",
+      "expected_domains": [
+        "relationships",
+        "psychology",
+        "family"
+      ],
+      "expected_memory_types": [
+        "clinical_context",
+        "formative_event",
+        "relationship_pattern"
+      ],
+      "min_results": 1
+    },
+    {
+      "name": "psychology-current-rules",
+      "query": "What psychology or relationship context should agents handle carefully right now?",
+      "expected_domains": [
+        "psychology",
+        "relationships",
+        "workflow"
+      ],
+      "expected_memory_types": [
+        "clinical_context",
+        "decision",
+        "psychology_pattern",
+        "relationship_pattern"
+      ],
+      "min_results": 1
+    },
+    {
+      "name": "business-vocality-goals",
+      "query": "What are my current business goals around Vocality and students?",
+      "expected_domains": [
+        "business",
+        "vocality",
+        "workflow"
+      ],
+      "expected_memory_types": [
+        "business_context",
+        "decision",
+        "goal",
+        "project_state"
+      ],
+      "min_results": 1
+    },
+    {
+      "name": "memory-cleanup-policy",
+      "query": "What is the policy for keeping deleting compacting and archiving memories?",
+      "expected_domains": [
+        "ai",
+        "systems",
+        "workflow"
+      ],
+      "expected_memory_types": [
+        "architecture_decision",
+        "decision",
+        "policy"
+      ],
+      "min_results": 1
+    },
+    {
+      "name": "mcp-client-health",
+      "query": "What is the health status of my MCP clients and hooks?",
+      "expected_domains": [
+        "ai",
+        "systems",
+        "infrastructure",
+        "workflow"
+      ],
+      "expected_memory_types": [
+        "decision",
+        "project_state",
+        "workflow"
+      ],
+      "min_results": 1
+    }
+  ]
+}

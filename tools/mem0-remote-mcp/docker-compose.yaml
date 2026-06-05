@@ -1,0 +1,30 @@
+name: mem0-remote-mcp
+
+services:
+  memory-mcp:
+    build: .
+    restart: unless-stopped
+    ports:
+      - 127.0.0.1:${MCP_PORT:-18890}:${MCP_PORT:-18890}
+    env_file:
+      - .env
+    environment:
+      MEM0_MCP_WRITES_ENABLED: "${MEM0_MCP_WRITES_ENABLED:-false}"
+      MEM0_MCP_RUNTIME_ENABLED: "${MEM0_MCP_RUNTIME_ENABLED:-false}"
+      KONTEXT_WRITE_AUDIT_ENABLED: "true"
+      KONTEXT_WRITE_AUDIT_MCP_URL: "http://kontext:8080/api/v2/mcp/{token}"
+      KONTEXT_WRITE_AUDIT_LOG: "/data/mem0-kontext-write-audit.jsonl"
+      KONTEXT_WRITE_AUDIT_TIMEOUT: "${KONTEXT_WRITE_AUDIT_TIMEOUT:-5.0}"
+    networks:
+      - mem0_network
+      - kontext_network
+    volumes:
+      - ./data:/data
+
+networks:
+  mem0_network:
+    external: true
+    name: ${MEM0_DOCKER_NETWORK:-mem0-dev_mem0_network}
+  kontext_network:
+    external: true
+    name: ${KONTEXT_DOCKER_NETWORK:-kontext_default}

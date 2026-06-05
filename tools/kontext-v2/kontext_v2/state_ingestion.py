@@ -251,6 +251,55 @@ def stage_state_event_proposals(
         source_hash=source_hash,
         extractor_version=extractor_version,
     )
+    transactional_auto_accept = (
+        allow_auto_accept
+        and state_auto_accept_enabled()
+        and callable(getattr(repo, "transaction", None))
+    )
+    if transactional_auto_accept:
+        try:
+            with repo.transaction():
+                counts = {"staged": 0, "auto_accepted": 0, "skipped": 0, "errors": []}
+                results: list[dict[str, Any]] = []
+                writes_applied = 0
+                touched_namespaces: set[str] = set()
+                for proposal in proposals:
+                    candidate = repo.stage_state_event_candidate(**proposal.stage_kwargs())
+                    counts["staged"] += 1
+                    writes_applied += 1
+                    result = proposal.safe_result(
+                        candidate_id=str(getattr(candidate, "id", "") or ""),
+                        review_status=str(getattr(candidate, "status", DEFAULT_REVIEW_STATUS) or DEFAULT_REVIEW_STATUS),
+                    )
+                    event = repo.accept_state_event_candidate(
+                        str(getattr(candidate, "id", "")),
+                        namespace=proposal.namespace,
+                    )
+                    event_namespace = normalize_namespace(getattr(event, "namespace", proposal.namespace))
+                    touched_namespaces.add(event_namespace)
+                    result["auto_accepted"] = True
+                    result["event_id"] = str(getattr(event, "id", "") or "")
+                    counts["auto_accepted"] += 1
+                    results.append(result)
+                for touched_namespace in sorted(touched_namespaces):
+                    repo.rebuild_current_state_projection(namespace=touched_namespace)
+                return {
+                    "mode": "stage",
+                    "enabled": True,
+                    "writes_applied": writes_applied,
+                    "source_hash": source_hash,
+                    "counts": counts,
+                    "results": results,
+                }
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "mode": "stage",
+                "enabled": True,
+                "writes_applied": 0,
+                "source_hash": source_hash,
+                "counts": {"staged": 0, "auto_accepted": 0, "skipped": 0, "errors": [type(exc).__name__]},
+                "results": [{"action": "error", "reason": type(exc).__name__}],
+            }
     counts = {"staged": 0, "auto_accepted": 0, "skipped": 0, "errors": []}
     results: list[dict[str, Any]] = []
     writes_applied = 0
@@ -303,6 +352,33 @@ def _edge_requests(edges: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
 
 
 def accept_reviewed_state_candidate(
+    repo: Any,
+    candidate_id: str,
+    *,
+    namespace: str = "live",
+    edges: list[dict[str, Any]] | None = None,
+    rebuild_projection: bool = True,
+) -> dict[str, Any]:
+    transaction = getattr(repo, "transaction", None)
+    if callable(transaction):
+        with transaction():
+            return _accept_reviewed_state_candidate(
+                repo,
+                candidate_id,
+                namespace=namespace,
+                edges=edges,
+                rebuild_projection=rebuild_projection,
+            )
+    return _accept_reviewed_state_candidate(
+        repo,
+        candidate_id,
+        namespace=namespace,
+        edges=edges,
+        rebuild_projection=rebuild_projection,
+    )
+
+
+def _accept_reviewed_state_candidate(
     repo: Any,
     candidate_id: str,
     *,

@@ -1,0 +1,19 @@
+{
+  "name": "Claude Code History Import",
+  "description": "Parse local Claude Code JSONL history, strip tool noise deterministically, extract durable thoughts via LLM, and ingest them into Open Brain with source metadata.",
+  "category": "recipes",
+  "author": {
+    "name": "Local OB1 user recipe"
+  },
+  "version": "1.0.0",
+  "requires": {
+    "open_brain": true,
+    "services": ["OpenRouter"],
+    "tools": ["Python 3.10+"]
+  },
+  "tags": ["claude", "claude-code", "import", "conversations", "knowledge-extraction"],
+  "difficulty": "intermediate",
+  "estimated_time": "20 minutes",
+  "created": "2026-04-29",
+  "updated": "2026-04-29"
+}

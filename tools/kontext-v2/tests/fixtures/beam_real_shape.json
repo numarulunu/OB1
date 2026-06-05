@@ -1,0 +1,47 @@
+{
+  "rows": [
+    {
+      "row": {
+        "conversation_id": "beam-sample-1",
+        "conversation_seed": {
+          "category": "deployment-memory",
+          "id": 7,
+          "subtopics": ["deploy", "notes"],
+          "theme": "engineering",
+          "title": "Deployment Notes"
+        },
+        "chat": [
+          [
+            {
+              "content": "Avery keeps the deploy checklist in the amber notebook.",
+              "id": 101,
+              "index": "batch-0-turn-0",
+              "question_type": "information_extraction",
+              "role": "user",
+              "time_anchor": "2025-01-03"
+            },
+            {
+              "content": "I noted that the deploy checklist is in the amber notebook.",
+              "id": 102,
+              "index": "batch-0-turn-1",
+              "question_type": "information_extraction",
+              "role": "assistant",
+              "time_anchor": "2025-01-03"
+            }
+          ],
+          [
+            {
+              "content": "Correction: Avery moved the deploy checklist to the Obsidian vault.",
+              "id": 201,
+              "index": "batch-1-turn-0",
+              "question_type": "knowledge_update",
+              "role": "user",
+              "time_anchor": "2025-02-04"
+            }
+          ]
+        ],
+        "probing_questions": "{'information_extraction': [{'question': 'Where did Avery first keep the deploy checklist?', 'answer': 'amber notebook', 'difficulty': 'easy', 'source_chat_ids': [101], 'rubric': [{'description': 'Mentions the amber notebook.'}]}], 'knowledge_update': [{'question': 'Where is Avery keeping the deploy checklist now?', 'answer': 'Obsidian vault', 'difficulty': 'medium', 'source_chat_ids': {'old': [101], 'new': [201]}, 'rubric': [{'description': 'Uses the updated Obsidian vault location.'}]}], 'abstention': [{'question': 'What is Avery background in psychology?', 'ideal_response': 'I do not have enough information.', 'difficulty': 'easy', 'rubric': [{'description': 'Declines because there is no evidence.'}]}]}"
+      }
+    }
+  ]
+}

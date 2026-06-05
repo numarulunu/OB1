@@ -52,6 +52,12 @@ def cutoff_summary(report: dict[str, Any], cutoff: int) -> dict[str, Any]:
 
 
 def actual_cost_usd(report: dict[str, Any]) -> float | None:
+    actual = report.get("actual_cost_usd")
+    if isinstance(actual, dict):
+        try:
+            return float(actual.get("total_usd"))
+        except (TypeError, ValueError):
+            pass
     estimated = report.get("estimated_cost_usd")
     if not isinstance(estimated, dict):
         return None

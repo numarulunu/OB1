@@ -1,0 +1,10 @@
+# Tool Registry
+
+| Tool | Version | Date | Purpose | Command |
+| --- | --- | --- | --- | --- |
+| Shadow Cleanup | v1.8 | 2026-05-05 | OB1 thoughts snapshot, clustering, proposal generation, guarded application, aggressive cleanup labels, backup-first hard deletes, human-memory compaction prompts, verifier-feedback repair, deterministic no-LLM junk pruning, Codex GPT-5.5 subagent workflow support, row-decision caching, and dense wave manifests for lower agent usage. | `python recipes\\shadow-cleanup\\shadow_cleanup.py --help`; `python recipes\\shadow-cleanup\\apply_proposals.py --help`; `python recipes\\shadow-cleanup\\aggressive_cleanup.py --help`; `python recipes\\shadow-cleanup\\budgeted_canonicalize.py --help` |
+| ChatGPT Chunk Audit Import | v1.0 | 2026-05-02 | Reprocess large ChatGPT exports at chunk level with duplicate-checked Supabase ingestion. | `python recipes\\chatgpt-conversation-import\\import-chatgpt-chunks.py --help` |
+| Gemini Conversation Import | v1.0 | 2026-05-02 | Import Gemini text exports with normalized dedupe, chunked Qwen extraction, and Supabase ingestion. | `python recipes\\gemini-conversation-import\\import-gemini.py --help` |
+| WhatsApp Chat Import | v1.0 | 2026-05-03 | Import WhatsApp raw exports and processed summaries with privacy-filtered Qwen extraction and Supabase ingestion. | `python recipes\\whatsapp-chat-import\\import-whatsapp.py --help` |
+| Human Memory V2 Mem0 Bridge | v1.0 | 2026-05-07 | Local dashboard review, Mem0-ready request JSONL export, and dry-run-first Mem0 import path for curated OB1 Human Memory V2 cards. | `python recipes\shadow-cleanup\review_mem0_pipeline.py --help` |
+| Mem0 Extractor | v0.2 | 2026-05-08 | External dry-run-first Mem0 extraction layer with deterministic Human Memory V2 grading, calibrated signal scores, domain-specific quality gates, memory tiers, OpenAI-compatible LLM proposal parsing, JSONL response cache, compact review exports, and guarded apply-plan command. | `python tools\mem0-extractor\extract_session.py --help`; `python tools\mem0-extractor\apply_report.py --help` |

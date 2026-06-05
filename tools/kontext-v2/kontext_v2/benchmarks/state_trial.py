@@ -84,6 +84,14 @@ def _benchmark_enabled() -> bool:
     return str(os.environ.get("KONTEXT_BENCHMARK_STATE_MODEL_ENABLED") or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _benchmark_trial_namespace(namespace: str) -> str:
+    raw_namespace = str(namespace or "").strip()
+    normalized = normalize_namespace(raw_namespace)
+    if not raw_namespace or normalized == "live" or not normalized.startswith("benchmark:"):
+        raise ValueError("benchmark state trial namespace must be a non-empty benchmark:* namespace")
+    return normalized
+
+
 def _typed_answer_emitter_for_trial():
     if typed_state_v2_enabled() or typed_object_summary_enabled():
         return render_current_state_typed
@@ -169,7 +177,7 @@ def _question_hash(question: dict[str, Any]) -> str:
 
 
 def _state_key(category: str, question_hash: str) -> str:
-    return f"benchmark.{category}.{question_hash[:12]}"
+    return f"benchmark.{category}.{question_hash}"
 
 
 def _judged_bundle_question_hash(question: dict[str, Any]) -> str:
@@ -317,14 +325,11 @@ def _state_value_payload(category: str, text: str, explicit_value: dict[str, Any
     return {"text": text}
 
 
-def _projected_answer_value(fact: CurrentStateFact | None) -> str:
-    if fact is None:
-        return ""
-    value = fact.fact_value if isinstance(fact.fact_value, dict) else {}
+def _projected_value_text(value: dict[str, Any], fallback_text: str) -> str:
     if not value:
-        return str(fact.fact_text or "")
+        return str(fallback_text or "")
     if set(value) == {"text"}:
-        return str(fact.fact_text or value.get("text") or "")
+        return str(fallback_text or value.get("text") or "")
 
     def scalar_values(node: Any) -> list[str]:
         if isinstance(node, dict):
@@ -347,7 +352,14 @@ def _projected_answer_value(fact: CurrentStateFact | None) -> str:
         return []
 
     projected_values = scalar_values(value)
-    return " ".join(projected_values) if projected_values else str(fact.fact_text or "")
+    return " ".join(projected_values) if projected_values else str(fallback_text or "")
+
+
+def _projected_answer_value(fact: CurrentStateFact | None) -> str:
+    if fact is None:
+        return ""
+    value = fact.fact_value if isinstance(fact.fact_value, dict) else {}
+    return _projected_value_text(value, str(fact.fact_text or ""))
 
 
 def _judged_memory_projection_score(event: dict[str, Any], question_text: str) -> tuple[int, int, int, int]:
@@ -765,6 +777,7 @@ def run_benchmark_state_trial(
             "questions": [],
         }
 
+    namespace = _benchmark_trial_namespace(namespace)
     plan = build_benchmark_state_events(
         fixture,
         namespace=namespace,
@@ -977,6 +990,7 @@ def run_judged_bundle_state_trial(
             "questions": [],
         }
 
+    namespace = _benchmark_trial_namespace(namespace)
     plan = build_judged_bundle_state_events(
         bundle,
         namespace=namespace,
@@ -1001,6 +1015,7 @@ def run_judged_bundle_state_trial(
     preview_events: list[StateEvent] = []
     preview_edges: list[StateEventEdge] = []
     event_texts: dict[str, str] = {}
+    event_projection_texts: dict[str, str] = {}
     event_metadata: dict[str, dict[str, Any]] = {}
     question_events_by_state_key: dict[str, list[str]] = {}
     accepted_count = 0
@@ -1057,6 +1072,8 @@ def run_judged_bundle_state_trial(
                 would_edge_count += 1
             previous_event_by_state_key[state_key] = event_id
             event_texts[event_id] = str(planned_event.get("value_text") or "")
+            planned_value = planned_event.get("value") if isinstance(planned_event.get("value"), dict) else {}
+            event_projection_texts[event_id] = _projected_value_text(planned_value, event_texts[event_id])
             metadata = planned_event.get("metadata") if isinstance(planned_event.get("metadata"), dict) else {}
             event_metadata[event_id] = metadata
             question_events_by_state_key.setdefault(state_key, []).append(event_id)
@@ -1075,6 +1092,8 @@ def run_judged_bundle_state_trial(
         if event_id:
             previous_event_by_state_key[state_key] = event_id
             event_texts[event_id] = str(planned_event.get("value_text") or "")
+            planned_value = planned_event.get("value") if isinstance(planned_event.get("value"), dict) else {}
+            event_projection_texts[event_id] = _projected_value_text(planned_value, event_texts[event_id])
             metadata = planned_event.get("metadata") if isinstance(planned_event.get("metadata"), dict) else {}
             event_metadata[event_id] = metadata
             question_events_by_state_key.setdefault(state_key, []).append(event_id)
@@ -1114,7 +1133,11 @@ def run_judged_bundle_state_trial(
         if not active_event_id and rows:
             active_ids = _event_ids_from_projection_row(rows[0])
             active_event_id = active_ids[0] if active_ids else ""
-        active_text = _projected_answer_value(active_fact) if active_fact else event_texts.get(active_event_id, "")
+        active_text = (
+            _projected_answer_value(active_fact)
+            if active_fact
+            else event_projection_texts.get(active_event_id, event_texts.get(active_event_id, ""))
+        )
         overlap = _private_overlap_summary(
             active_text=active_text,
             ground_truth_answer=str(question.get("_ground_truth_answer") or ""),
@@ -1123,7 +1146,7 @@ def run_judged_bundle_state_trial(
         best_event_id = active_event_id
         for event_id in question_events_by_state_key.get(str(question["state_key"]), []):
             candidate_overlap = _private_overlap_summary(
-                active_text=event_texts.get(event_id, ""),
+                active_text=event_projection_texts.get(event_id, event_texts.get(event_id, "")),
                 ground_truth_answer=str(question.get("_ground_truth_answer") or ""),
             )
             if (
@@ -1186,7 +1209,7 @@ def run_judged_bundle_state_trial(
                 routed_ids = _event_ids_from_projection_row(routed_rows[0])
                 routed_event_id = routed_ids[0] if routed_ids else ""
             routed_overlap = _private_overlap_summary(
-                active_text=event_texts.get(routed_event_id, ""),
+                active_text=event_projection_texts.get(routed_event_id, event_texts.get(routed_event_id, "")),
                 ground_truth_answer=str(question.get("_ground_truth_answer") or ""),
             )
             if routed_overlap["active_answer_overlap"]:

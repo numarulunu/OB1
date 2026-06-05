@@ -121,7 +121,7 @@ def _status(value: Any) -> str:
 
 def _event_relation(value: Any, *, status: str, support_ids: list[str], superseded_ids: list[str], cancelled_ids: list[str]) -> str:
     explicit = str(_get(value, "event_relation") or "").strip().lower()
-    if explicit in VALID_EVENT_RELATIONS:
+    if explicit in VALID_EVENT_RELATIONS and status == "active":
         return explicit
     event_type = str(_get(value, "state_event_type") or _get(value, "event_type") or "").strip().lower()
     if status == "cancelled" or event_type == "cancellation":
@@ -143,13 +143,21 @@ def _event_relation(value: Any, *, status: str, support_ids: list[str], supersed
 
 def render_current_state_typed(value: Any) -> dict[str, Any]:
     metadata = _metadata(value)
-    fact_value = (
-        _get(value, "current_value")
-        or _get(value, "fact_value")
-        or metadata.get("current_value")
-        or metadata.get("fact_value")
-        or {}
-    )
+    status = _status(value)
+    def direct_get(key: str) -> Any:
+        if isinstance(value, dict):
+            return value.get(key)
+        return getattr(value, key, None)
+
+    fact_value = direct_get("current_value")
+    if fact_value is None:
+        fact_value = direct_get("fact_value")
+    if fact_value is None and status == "active":
+        fact_value = metadata.get("current_value")
+    if fact_value is None and status == "active":
+        fact_value = metadata.get("fact_value")
+    if fact_value is None:
+        fact_value = {}
     value_text = (
         _get(value, "fact_text")
         or _get(value, "value_text")
@@ -161,7 +169,6 @@ def render_current_state_typed(value: Any) -> dict[str, Any]:
     support_ids = _coerce_ids(_get(value, "support_event_ids"))
     superseded_ids = _coerce_ids(_get(value, "superseded_event_ids"))
     cancelled_ids = _coerce_ids(_get(value, "cancelled_event_ids"))
-    status = _status(value)
     answer = TypedStateEventAnswer(
         schema_version=SCHEMA_VERSION,
         namespace=str(_get(value, "namespace") or "live"),

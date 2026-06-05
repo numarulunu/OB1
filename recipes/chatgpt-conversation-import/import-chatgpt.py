@@ -66,6 +66,8 @@ from chatgpt_parser import (
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 SYNC_LOG_PATH = SCRIPT_DIR / "chatgpt-sync-log.json"
+MAX_THOUGHTS_PER_CONVERSATION = 5
+DEFAULT_FALLBACK_OPENROUTER_MODEL = "openai/gpt-4o-mini"
 
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 OLLAMA_BASE = "http://localhost:11434"
@@ -275,6 +277,11 @@ def http_post_with_retry(url, headers, body, retries=2):
     for attempt in range(retries + 1):
         try:
             resp = requests.post(url, headers=headers, json=body, timeout=120)
+            if resp.status_code in (408, 409, 425, 429) or resp.status_code >= 500:
+                if attempt < retries:
+                    time.sleep(1 * (attempt + 1))
+                    continue
+                return resp
             if resp.status_code >= 500 and attempt < retries:
                 time.sleep(1 * (attempt + 1))
                 continue
@@ -342,7 +349,7 @@ def _parse_extraction_response(raw_content, store_conversations=False):
             })
 
     extraction = {
-        "thoughts": valid_thoughts,
+        "thoughts": valid_thoughts[:MAX_THOUGHTS_PER_CONVERSATION],
         "conversation_type": result.get("conversation_type", ""),
         "skip_reason": result.get("skip_reason"),
     }
@@ -356,7 +363,17 @@ def _parse_extraction_response(raw_content, store_conversations=False):
     return extraction
 
 
-def summarize_openrouter(title, date_str, dialogue_text, message_count, model_slug, store_conversations=False, openrouter_model="openai/gpt-4o-mini", focus_instruction=""):
+def summarize_openrouter(
+    title,
+    date_str,
+    dialogue_text,
+    message_count,
+    model_slug,
+    store_conversations=False,
+    openrouter_model="openai/gpt-4o-mini",
+    focus_instruction="",
+    fallback_openrouter_model=DEFAULT_FALLBACK_OPENROUTER_MODEL,
+):
     """Extract knowledge from a conversation using OpenRouter."""
     if not OPENROUTER_API_KEY:
         print("Error: OPENROUTER_API_KEY environment variable required for extraction.")
@@ -373,39 +390,46 @@ def summarize_openrouter(title, date_str, dialogue_text, message_count, model_sl
     if focus_instruction:
         prompt = prompt.replace("\nTitle:", f"{focus_instruction}\n\nTitle:")
 
-    resp = http_post_with_retry(
-        f"{OPENROUTER_BASE}/chat/completions",
-        headers={
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "Content-Type": "application/json",
-        },
-        body={
-            "model": openrouter_model,
-            "response_format": {"type": "json_object"},
-            "messages": [
-                {"role": "user", "content": prompt},
-            ],
-            "temperature": 0,
-        },
-    )
+    models = [openrouter_model]
+    if fallback_openrouter_model and fallback_openrouter_model not in models:
+        models.append(fallback_openrouter_model)
 
-    if not resp or resp.status_code != 200:
-        status = resp.status_code if resp else "no response"
-        detail = ""
+    for model_name in models:
+        resp = http_post_with_retry(
+            f"{OPENROUTER_BASE}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            body={
+                "model": model_name,
+                "response_format": {"type": "json_object"},
+                "messages": [
+                    {"role": "user", "content": prompt},
+                ],
+                "temperature": 0,
+            },
+        )
+
+        if not resp or resp.status_code != 200:
+            status = resp.status_code if resp else "no response"
+            detail = ""
+            try:
+                detail = resp.text[:300] if resp else ""
+            except Exception:
+                pass
+            print(f"   Warning: Extraction failed for {model_name} ({status}): {detail}")
+            continue
+
         try:
-            detail = resp.text[:300] if resp else ""
-        except Exception:
-            pass
-        print(f"   Warning: Extraction failed ({status}): {detail}")
-        return {"thoughts": [], "conversation_type": "", "skip_reason": "api_error"}
+            data = resp.json()
+            raw_content = data["choices"][0]["message"]["content"]
+            return _parse_extraction_response(raw_content, store_conversations)
+        except (KeyError, IndexError) as e:
+            print(f"   Warning: Failed to parse extraction response for {model_name}: {e}")
+            continue
 
-    try:
-        data = resp.json()
-        raw_content = data["choices"][0]["message"]["content"]
-        return _parse_extraction_response(raw_content, store_conversations)
-    except (KeyError, IndexError) as e:
-        print(f"   Warning: Failed to parse extraction response: {e}")
-        return {"thoughts": [], "conversation_type": "", "skip_reason": "parse_error"}
+    return {"thoughts": [], "conversation_type": "", "skip_reason": "api_error"}
 
 
 def summarize_ollama(title, date_str, dialogue_text, message_count, model_slug, model_name="qwen3", store_conversations=False, focus_instruction=""):
@@ -454,39 +478,64 @@ def summarize(title, date_str, dialogue_text, message_count, model_slug, args):
     focus_instruction = build_focus_instruction(getattr(args, "focus", None))
     if args.model == "ollama":
         return summarize_ollama(title, date_str, dialogue_text, message_count, model_slug, args.ollama_model, store_conversations, focus_instruction)
-    return summarize_openrouter(title, date_str, dialogue_text, message_count, model_slug, store_conversations, args.openrouter_model, focus_instruction)
+    return summarize_openrouter(
+        title,
+        date_str,
+        dialogue_text,
+        message_count,
+        model_slug,
+        store_conversations,
+        args.openrouter_model,
+        focus_instruction,
+        args.fallback_openrouter_model,
+    )
 
 
 # ─── Embedding Generation ───────────────────────────────────────────────────
 
 
-def generate_embedding(text):
+def generate_embedding(text, retries=2):
     """Generate a 1536-dim embedding via OpenRouter (text-embedding-3-small)."""
     truncated = text[:8000]
 
-    resp = http_post_with_retry(
-        f"{OPENROUTER_BASE}/embeddings",
-        headers={
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "Content-Type": "application/json",
-        },
-        body={
-            "model": "openai/text-embedding-3-small",
-            "input": truncated,
-        },
-    )
+    for attempt in range(retries + 1):
+        resp = http_post_with_retry(
+            f"{OPENROUTER_BASE}/embeddings",
+            headers={
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            body={
+                "model": "openai/text-embedding-3-small",
+                "input": truncated,
+            },
+        )
 
-    if not resp or resp.status_code != 200:
-        status = resp.status_code if resp else "no response"
-        print(f"   Warning: Embedding generation failed ({status})")
-        return None
+        if not resp or resp.status_code != 200:
+            status = resp.status_code if resp else "no response"
+            print(f"   Warning: Embedding generation failed ({status})")
+            if attempt < retries:
+                time.sleep(1 * (attempt + 1))
+                continue
+            return None
 
-    try:
-        data = resp.json()
-        return data["data"][0]["embedding"]
-    except (KeyError, IndexError) as e:
-        print(f"   Warning: Failed to parse embedding response: {e}")
-        return None
+        try:
+            data = resp.json()
+            return data["data"][0]["embedding"]
+        except (KeyError, IndexError) as e:
+            if attempt < retries:
+                time.sleep(1 * (attempt + 1))
+                continue
+            print(f"   Warning: Failed to parse embedding response: {e}")
+            return None
+
+
+def normalize_supabase_url(value):
+    """Accept either a project URL or the Data API /rest/v1 URL."""
+    url = (value or "").strip().rstrip("/")
+    if url.endswith("/rest/v1"):
+        url = url[: -len("/rest/v1")]
+    return url
 
 
 # ─── Semantic Deduplication ──────────────────────────────────────────────────
@@ -503,7 +552,7 @@ def check_semantic_duplicate(thought_text, threshold=0.92):
         return False  # Can't check; allow insertion
 
     resp = http_post_with_retry(
-        f"{SUPABASE_URL}/rest/v1/rpc/match_thoughts",
+        f"{normalize_supabase_url(SUPABASE_URL)}/rest/v1/rpc/match_thoughts",
         headers={
             "Content-Type": "application/json",
             "apikey": SUPABASE_SERVICE_ROLE_KEY,
@@ -544,7 +593,7 @@ def ingest_thought_supabase(content, metadata_dict, embed_text=None):
         return {"ok": False, "error": "Failed to generate embedding"}
 
     resp = http_post_with_retry(
-        f"{SUPABASE_URL}/rest/v1/thoughts",
+        f"{normalize_supabase_url(SUPABASE_URL)}/rest/v1/thoughts",
         headers={
             "Content-Type": "application/json",
             "apikey": SUPABASE_SERVICE_ROLE_KEY,
@@ -669,7 +718,7 @@ def store_conversation(conv, extraction, conv_meta, message_count, import_batch)
 
     # Upsert: insert or update on chatgpt_id conflict
     resp = http_post_with_retry(
-        f"{SUPABASE_URL}/rest/v1/chatgpt_conversations?on_conflict=chatgpt_id",
+        f"{normalize_supabase_url(SUPABASE_URL)}/rest/v1/chatgpt_conversations?on_conflict=chatgpt_id",
         headers={
             "Content-Type": "application/json",
             "apikey": SUPABASE_SERVICE_ROLE_KEY,
@@ -735,6 +784,7 @@ Examples:
     parser.add_argument("--min-words", type=int, default=0, help="Override minimum word count for borderline filtering (default: 50)")
     parser.add_argument("--max-words", type=int, default=50000, help="Skip conversations exceeding this word count (default: 50000, ~$1+ per conversation with gpt-4o)")
     parser.add_argument("--openrouter-model", default="openai/gpt-4o-mini", help="OpenRouter model for extraction (default: openai/gpt-4o-mini)")
+    parser.add_argument("--fallback-openrouter-model", default=DEFAULT_FALLBACK_OPENROUTER_MODEL, help="Fallback OpenRouter model after primary extraction failure")
     parser.add_argument("--focus", type=str, default=None, metavar="TOPICS", help="""\
 Focus extraction on specific topics. Accepts a preset name or custom description.
 

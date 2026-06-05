@@ -1,0 +1,28 @@
+{
+  "results": [
+    {
+      "id": "mem-ai-architecture-1",
+      "memory": "OB1 memory architecture uses Mem0 as live source and Kontext V2 as planned mirror.",
+      "metadata": {
+        "title": "OB1 memory architecture",
+        "domains": ["ai", "systems", "infrastructure"],
+        "memory_type": "project_state",
+        "current_status": "active",
+        "memory_tier": "active",
+        "signal_strength": 9
+      }
+    },
+    {
+      "id": "mem-vocality-1",
+      "memory": "Vocality work should prioritize premium offer and proof library over generic AI tooling.",
+      "metadata": {
+        "title": "Vocality focus doctrine",
+        "domains": ["business", "vocality", "workflow"],
+        "memory_type": "decision",
+        "current_status": "active",
+        "memory_tier": "active",
+        "signal_strength": 10
+      }
+    }
+  ]
+}

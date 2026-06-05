@@ -1,0 +1,30 @@
+[
+  {
+    "name": "ai systems architecture",
+    "query": "Mem0 MCP shared memory architecture",
+    "expected_domains": ["ai", "systems", "infrastructure"],
+    "expected_memory_types": ["architecture_decision", "project_state"],
+    "min_results": 1
+  },
+  {
+    "name": "execution blocker pattern",
+    "query": "I am stuck and cannot start",
+    "expected_domains": ["workflow", "psychology"],
+    "expected_memory_types": ["execution_pattern", "psychology_pattern", "workflow"],
+    "min_results": 1
+  },
+  {
+    "name": "relationship psychology pattern",
+    "query": "partner conflict attachment pattern",
+    "expected_domains": ["relationships", "psychology"],
+    "expected_memory_types": ["relationship_pattern", "formative_event"],
+    "min_results": 1
+  },
+  {
+    "name": "opera vocality career",
+    "query": "opera voice role auditions career",
+    "expected_domains": ["opera", "vocality"],
+    "expected_memory_types": ["career_context", "project_state"],
+    "min_results": 1
+  }
+]

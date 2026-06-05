@@ -159,6 +159,8 @@ def event_hash(
     state_key: str,
     event_type: str,
     value_hash: str,
+    effective_at: Any = None,
+    observed_at: Any = None,
 ) -> str:
     payload = {
         "namespace": normalize_namespace(namespace),
@@ -169,6 +171,8 @@ def event_hash(
         "state_key": normalize_state_key(state_key),
         "event_type": str(event_type or "").strip().lower(),
         "value_hash": str(value_hash or ""),
+        "effective_at": str(effective_at or ""),
+        "observed_at": str(observed_at or ""),
     }
     return stable_hash(canonical_json(payload))
 
@@ -205,12 +209,7 @@ def _event_time(value: Any) -> datetime:
 def _sort_events(events: list[StateEvent]) -> list[StateEvent]:
     return sorted(
         events,
-        key=lambda event: (
-            _event_time(event.effective_at or event.observed_at or event.created_at),
-            _trust_rank(event),
-            _extractor_version_rank(event.extractor_version),
-            str(event.id),
-        ),
+        key=lambda event: (_event_time(event.effective_at or event.observed_at or event.created_at), _event_rank(event)),
     )
 
 
@@ -224,6 +223,18 @@ def _extractor_version_rank(value: Any) -> tuple[str, int]:
     if match:
         return (re.sub(r"v?\d+[^0-9]*$", "", text), int(match.group(1)))
     return (text, 0)
+
+
+def _event_rank(event: StateEvent) -> tuple[int, tuple[str, int], str]:
+    return (_trust_rank(event), _extractor_version_rank(event.extractor_version), str(event.id))
+
+
+def _value_resolution_rank(event: StateEvent) -> tuple[int, datetime, tuple[str, int]]:
+    return (
+        _trust_rank(event),
+        _event_time(event.effective_at or event.observed_at or event.created_at),
+        _extractor_version_rank(event.extractor_version),
+    )
 
 
 def _edge_ids(edges: list[StateEventEdge], edge_type: str) -> set[str]:
@@ -280,7 +291,15 @@ def _collapse_extractor_replays(events: list[StateEvent]) -> tuple[list[StateEve
         if len(versions) <= 1:
             collapsed.extend(grouped_events)
             continue
-        sorted_group = _sort_events(grouped_events)
+        sorted_group = sorted(
+            grouped_events,
+            key=lambda event: (
+                _extractor_version_rank(event.extractor_version),
+                _trust_rank(event),
+                _event_time(event.effective_at or event.observed_at or event.created_at),
+                str(event.id),
+            ),
+        )
         winner = sorted_group[-1]
         collapsed.append(winner)
         overridden.extend(str(event.id) for event in sorted_group[:-1])
@@ -290,10 +309,10 @@ def _collapse_extractor_replays(events: list[StateEvent]) -> tuple[list[StateEve
 def _clear_trust_winner(events: list[StateEvent]) -> StateEvent | None:
     if len(events) < 2:
         return events[-1] if events else None
-    ranked = sorted(events, key=lambda event: (_trust_rank(event), _event_time(event.effective_at or event.observed_at or event.created_at), str(event.id)))
+    ranked = sorted(events, key=lambda event: (_value_resolution_rank(event), str(event.id)))
     winner = ranked[-1]
     runner_up = ranked[-2]
-    if _trust_rank(winner) > _trust_rank(runner_up):
+    if _value_resolution_rank(winner) > _value_resolution_rank(runner_up):
         return winner
     return None
 
@@ -321,7 +340,7 @@ def build_current_state_facts(
         target_namespace = normalize_namespace(target.namespace)
         if source_namespace != target_namespace or source.subject_id != target.subject_id:
             continue
-        edges_by_group[(source_namespace, source.subject_id, normalize_state_key(edge.state_key))].append(edge)
+        edges_by_group[(source_namespace, source.subject_id, normalize_state_key(source.state_key))].append(edge)
 
     facts: list[CurrentStateFact] = []
     for (namespace, subject_id, state_key), group_events in sorted(events_by_group.items()):
@@ -338,11 +357,24 @@ def build_current_state_facts(
             for event in sorted_events
             if validate_event_type(event.event_type) in VALUE_EVENT_TYPES and str(event.id) not in terminal_ids
         ]
+        raw_cancelled_ids: set[str] = set()
+        if cancellation_events:
+            raw_cancel_time = max(
+                _event_time(event.effective_at or event.observed_at or event.created_at)
+                for event in cancellation_events
+            )
+            filtered_value_events: list[StateEvent] = []
+            for event in raw_value_events:
+                if _event_time(event.effective_at or event.observed_at or event.created_at) <= raw_cancel_time:
+                    raw_cancelled_ids.add(str(event.id))
+                else:
+                    filtered_value_events.append(event)
+            raw_value_events = filtered_value_events
         value_events, extractor_overridden_ids = _collapse_extractor_replays(raw_value_events)
         latest_event = sorted_events[-1] if sorted_events else None
 
-        if cancellation_events and latest_event is not None and validate_event_type(latest_event.event_type) == "cancellation":
-            active_cancel = latest_event
+        if cancellation_events and not value_events:
+            active_cancel = cancellation_events[-1]
             fact = CurrentStateFact(
                 id=None,
                 namespace=namespace,
@@ -353,7 +385,7 @@ def build_current_state_facts(
                 active_event_id=str(active_cancel.id),
                 support_event_ids=[],
                 superseded_event_ids=sorted(superseded_ids | set(extractor_overridden_ids)),
-                cancelled_event_ids=sorted(cancelled_ids | {str(event.id) for event in value_events}),
+                cancelled_event_ids=sorted(cancelled_ids | raw_cancelled_ids),
                 confidence=float(active_cancel.confidence or 0.0),
                 trust_tier=str(active_cancel.trust_tier or ""),
                 status="cancelled",
@@ -383,7 +415,7 @@ def build_current_state_facts(
                     active_event_id=str(active.id),
                     support_event_ids=support_event_ids,
                     superseded_event_ids=sorted(superseded_ids | set(overridden_ids)),
-                    cancelled_event_ids=sorted(cancelled_ids),
+                    cancelled_event_ids=sorted(cancelled_ids | raw_cancelled_ids),
                     confidence=float(active.confidence or 0.0),
                     trust_tier=str(active.trust_tier or ""),
                     status="active",
@@ -407,7 +439,7 @@ def build_current_state_facts(
                     active_event_id=None,
                     support_event_ids=support_event_ids,
                     superseded_event_ids=sorted(superseded_ids | set(extractor_overridden_ids)),
-                    cancelled_event_ids=sorted(cancelled_ids),
+                    cancelled_event_ids=sorted(cancelled_ids | raw_cancelled_ids),
                     confidence=0.0,
                     trust_tier="ambiguous",
                     status="ambiguous",
@@ -434,7 +466,7 @@ def build_current_state_facts(
                     active_event_id=str(active.id),
                     support_event_ids=support_event_ids,
                     superseded_event_ids=sorted(superseded_ids | set(extractor_overridden_ids)),
-                    cancelled_event_ids=sorted(cancelled_ids),
+                    cancelled_event_ids=sorted(cancelled_ids | raw_cancelled_ids),
                     confidence=float(active.confidence or 0.0),
                     trust_tier=str(active.trust_tier or ""),
                     status="active",
@@ -457,7 +489,7 @@ def build_current_state_facts(
                 active_event_id=str(active_cancel.id) if active_cancel else None,
                 support_event_ids=[],
                 superseded_event_ids=sorted(superseded_ids),
-                cancelled_event_ids=sorted(cancelled_ids),
+                cancelled_event_ids=sorted(cancelled_ids | raw_cancelled_ids),
                 confidence=float(active_cancel.confidence or 0.0) if active_cancel else 0.0,
                 trust_tier=str(active_cancel.trust_tier or "") if active_cancel else "",
                 status="cancelled",

@@ -1,0 +1,7 @@
+{
+  "name": "gemini-conversation-import",
+  "version": "1.0.0",
+  "description": "Import Gemini text exports into Open Brain as distilled, duplicate-checked thoughts.",
+  "language": "python",
+  "entrypoint": "import-gemini.py"
+}

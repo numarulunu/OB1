@@ -361,10 +361,6 @@ def prepare_dialogue_for_extraction(messages, total_conversations):
     if len(dialogue) <= MAX_CONTEXT_CHARS:
         return [dialogue]
 
-    # Small export fast path: no session splitting
-    if total_conversations < SMALL_EXPORT_THRESHOLD:
-        return [_truncate_session(dialogue)]
-
     # Split into sessions
     sessions = split_sessions(messages)
     session_texts = []

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import shlex
 import sys
@@ -18,6 +19,9 @@ DEFAULT_ANSWER_INPUT_TOKENS = 4_000
 DEFAULT_ANSWER_OUTPUT_TOKENS = 300
 DEFAULT_JUDGE_INPUT_TOKENS = 1_500
 DEFAULT_JUDGE_OUTPUT_TOKENS = 120
+DEFAULT_PAID_MAX_MEMORIES = 10
+DEFAULT_PAID_MEMORY_MAX_CHARS = 1200
+DEFAULT_PAID_TOTAL_MAX_CHARS = 18000
 
 
 def load_bundle(path: str | Path) -> dict[str, Any]:
@@ -105,6 +109,62 @@ def existing_output_path_error(value: str, label: str) -> str | None:
     return None
 
 
+def positive_number_error(args: argparse.Namespace) -> str | None:
+    fields = [
+        "max_cost_usd",
+        "answer_input_usd_per_1m",
+        "answer_output_usd_per_1m",
+        "judge_input_usd_per_1m",
+        "judge_output_usd_per_1m",
+    ]
+    for field in fields:
+        value = float(getattr(args, field))
+        if not math.isfinite(value) or value <= 0:
+            return f"{field} must be positive"
+    return None
+
+
+def memory_limited_paid_path(args: argparse.Namespace) -> bool:
+    return any(
+        bool(getattr(args, name, False))
+        for name in [
+            "temporal_fact_extraction",
+            "beam_evidence_windows",
+            "beam_answer_contract",
+            "beam_structured_evidence",
+            "beam_turn_neighborhoods",
+            "beam_category_synthesis",
+            "beam_state_reducer",
+            "beam_answer_candidate_selector",
+            "beam_extractive_candidate",
+            "beam_state_direct_candidate",
+            "beam_ranked_state_memory_candidate",
+            "beam_typed_projection_candidate",
+            "beam_memory_atomizer",
+            "beam_state_ledger",
+            "beam_state_verifier",
+            "beam_deterministic_state_resolver",
+            "beam_focused_state_answer",
+            "longmemeval_evidence_windows",
+            "longmemeval_structured_evidence",
+        ]
+    )
+
+
+def effective_answer_limits(args: argparse.Namespace) -> dict[str, int | None]:
+    if not memory_limited_paid_path(args):
+        return {
+            "answer_max_memories": getattr(args, "answer_max_memories", None),
+            "answer_memory_max_chars": getattr(args, "answer_memory_max_chars", None),
+            "answer_total_max_chars": getattr(args, "answer_total_max_chars", None),
+        }
+    return {
+        "answer_max_memories": getattr(args, "answer_max_memories", None) or DEFAULT_PAID_MAX_MEMORIES,
+        "answer_memory_max_chars": getattr(args, "answer_memory_max_chars", None) or DEFAULT_PAID_MEMORY_MAX_CHARS,
+        "answer_total_max_chars": getattr(args, "answer_total_max_chars", None) or DEFAULT_PAID_TOTAL_MAX_CHARS,
+    }
+
+
 def judge_units(rows: list[dict[str, Any]], mode: str, override: float | None) -> tuple[float, float]:
     if not rows:
         return 0.0, 0.0
@@ -145,6 +205,7 @@ def cost_from_estimate(
 
 
 def command_template(args: argparse.Namespace, judge_units_per_question: float = 1.0, expected_questions: int | None = None) -> str:
+    answer_limits = effective_answer_limits(args)
     parts = [
         "python3",
         "/opt/kontext/scripts/judged_benchmark_run.py",
@@ -183,12 +244,12 @@ def command_template(args: argparse.Namespace, judge_units_per_question: float =
     ]
     if judge_units_per_question != 1.0:
         parts.extend(["--judge-units-per-question", str(judge_units_per_question)])
-    if getattr(args, "answer_max_memories", None) is not None:
-        parts.extend(["--answer-max-memories", str(args.answer_max_memories)])
-    if getattr(args, "answer_memory_max_chars", None) is not None:
-        parts.extend(["--answer-memory-max-chars", str(args.answer_memory_max_chars)])
-    if getattr(args, "answer_total_max_chars", None) is not None:
-        parts.extend(["--answer-total-max-chars", str(args.answer_total_max_chars)])
+    if answer_limits["answer_max_memories"] is not None:
+        parts.extend(["--answer-max-memories", str(answer_limits["answer_max_memories"])])
+    if answer_limits["answer_memory_max_chars"] is not None:
+        parts.extend(["--answer-memory-max-chars", str(answer_limits["answer_memory_max_chars"])])
+    if answer_limits["answer_total_max_chars"] is not None:
+        parts.extend(["--answer-total-max-chars", str(answer_limits["answer_total_max_chars"])])
     if getattr(args, "temporal_fact_extraction", False):
         parts.append("--temporal-fact-extraction")
     if getattr(args, "beam_evidence_windows", False):
@@ -253,6 +314,8 @@ def command_template(args: argparse.Namespace, judge_units_per_question: float =
         str(parse_cutoffs(args.cutoffs, {})[-1]),
         "--verify-min-accuracy",
         str(args.min_accuracy),
+        "--verify-min-questions",
+        str(expected_questions if expected_questions is not None else args.max_questions),
         "--verify-mem0-target-accuracy",
         str(args.mem0_target_accuracy),
         "--verify-max-cost-usd",
@@ -316,14 +379,16 @@ def command_wrapper_template(args: argparse.Namespace, command: str) -> str:
     )
 
 
-def blocked(reason: str) -> dict[str, Any]:
-    return {
+def blocked(reason: str, **extra: Any) -> dict[str, Any]:
+    packet = {
         "ok": False,
         "mode": "judged-benchmark-approval-packet",
         "runs_model_calls": False,
         "approval_required": False,
         "reason": reason,
     }
+    packet.update(extra)
+    return packet
 
 
 def build_packet(args: argparse.Namespace) -> dict[str, Any]:
@@ -341,6 +406,9 @@ def build_packet(args: argparse.Namespace) -> dict[str, Any]:
     verification_output_error = existing_output_path_error(args.verification_output, "verification output")
     if verification_output_error:
         return blocked(verification_output_error)
+    pricing_error = positive_number_error(args)
+    if pricing_error:
+        return blocked(pricing_error)
     cutoffs = parse_cutoffs(args.cutoffs, bundle)
     rows = selected_question_rows(bundle, args.max_questions, getattr(args, "question_offset", 0))
     question_count = len(rows)
@@ -399,6 +467,12 @@ def build_packet(args: argparse.Namespace) -> dict[str, Any]:
     )
     judge_calls = format_number(judge_units_total * len(cutoffs))
     tokens, cost = cost_from_estimate(answer_calls, judge_calls, args)
+    if cost["total_usd"] > float(args.max_cost_usd):
+        return blocked(
+            "estimated cost exceeds max_cost_usd",
+            estimated_cost_usd=cost,
+            max_cost_usd=args.max_cost_usd,
+        )
     estimated_llm_calls = {
         "answer_calls": answer_calls,
         "judge_calls": judge_calls,
@@ -429,11 +503,7 @@ def build_packet(args: argparse.Namespace) -> dict[str, Any]:
         estimated_llm_calls["beam_direct_answer_bypass_skipped_answer_calls"] = bypass_skipped_answer_calls
     if longmemeval_structured_calls:
         estimated_llm_calls["longmemeval_structured_evidence_calls"] = longmemeval_structured_calls
-    answer_prompt_caps = {
-        "answer_max_memories": getattr(args, "answer_max_memories", None),
-        "answer_memory_max_chars": getattr(args, "answer_memory_max_chars", None),
-        "answer_total_max_chars": getattr(args, "answer_total_max_chars", None),
-    }
+    answer_prompt_caps = effective_answer_limits(args)
     answer_prompt_caps = {key: value for key, value in answer_prompt_caps.items() if value is not None}
     command = command_template(args, judge_units_per_question, question_count)
     packet = {
@@ -565,6 +635,12 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.min_accuracy is None:
         args.min_accuracy = args.mem0_target_accuracy
+    if args.output:
+        output_error = existing_output_path_error(args.output, "approval packet output")
+        if output_error:
+            packet = blocked(output_error)
+            print(json.dumps(packet, ensure_ascii=False, indent=2, sort_keys=True))
+            return 2
     packet = build_packet(args)
     text = json.dumps(packet, ensure_ascii=False, indent=2, sort_keys=True)
     if args.output:

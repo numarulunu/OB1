@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from contextlib import contextmanager
 
 import psycopg
 
@@ -41,7 +42,20 @@ def _count_value(row) -> int:
 class KontextRepository:
     def __init__(self, conn: psycopg.Connection) -> None:
         self.conn = conn
+        self._transaction_depth = 0
 
+    @contextmanager
+    def transaction(self):
+        with self.conn.transaction():
+            self._transaction_depth += 1
+            try:
+                yield
+            finally:
+                self._transaction_depth -= 1
+
+    def _commit(self) -> None:
+        if self._transaction_depth == 0:
+            self.conn.commit()
 
     @staticmethod
     def _coerce_metadata(value: object) -> dict:
@@ -1153,7 +1167,7 @@ class KontextRepository:
                 """,
                 (normalized_namespace, normalized_type, normalized_key, str(display_name or ""), aliases_json, scope_json),
             ).fetchone()
-        self.conn.commit()
+        self._commit()
         return self._state_subject_from_row(dict(row))
 
     def stage_state_event_candidate(
@@ -1244,52 +1258,52 @@ class KontextRepository:
                     json.dumps(metadata or {}, sort_keys=True),
                 ),
             ).fetchone()
-        self.conn.commit()
+        self._commit()
         return self._state_candidate_from_row(dict(row))
 
     def accept_state_event_candidate(self, candidate_id: str, *, namespace: str = "live") -> StateEvent:
-        normalized_namespace = normalize_namespace(namespace)
-        with self.conn.cursor(row_factory=dict_row) as cur:
-            candidate_row = cur.execute(
-                "SELECT * FROM state_event_candidates WHERE id = %s AND namespace = %s",
-                (candidate_id, normalized_namespace),
-            ).fetchone()
-        if candidate_row is None:
-            raise ValueError(f"State event candidate not found: {candidate_id}")
-        candidate = self._state_candidate_from_row(dict(candidate_row))
-        subject = self.get_or_create_state_subject(
-            namespace=candidate.namespace,
-            subject_type=candidate.subject_type,
-            subject_key=candidate.subject_key,
-            display_name=candidate.subject_key,
-        )
-        event = self.insert_state_event(
-            namespace=candidate.namespace,
-            candidate_id=candidate.id,
-            subject_id=subject.id,
-            source_kind=candidate.source_kind,
-            source_id=candidate.source_id,
-            source_hash=candidate.source_hash,
-            source_span_hash=candidate.source_span_hash,
-            subject_type=candidate.subject_type,
-            subject_key=candidate.subject_key,
-            state_key=candidate.state_key,
-            event_type=candidate.event_type,
-            value=candidate.value,
-            value_text=candidate.value_text,
-            prior_value_text=candidate.prior_value_text,
-            effective_at=candidate.effective_at,
-            observed_at=candidate.observed_at,
-            actor_role=candidate.actor_role,
-            confidence=candidate.confidence,
-            trust_tier=candidate.trust_tier,
-            extractor_version=candidate.extractor_version,
-            metadata=candidate.metadata,
-        )
-        with self.conn.cursor() as cur:
-            cur.execute("UPDATE state_event_candidates SET status = 'accepted' WHERE id = %s", (candidate_id,))
-        self.conn.commit()
-        return event
+        with self.transaction():
+            normalized_namespace = normalize_namespace(namespace)
+            with self.conn.cursor(row_factory=dict_row) as cur:
+                candidate_row = cur.execute(
+                    "SELECT * FROM state_event_candidates WHERE id = %s AND namespace = %s",
+                    (candidate_id, normalized_namespace),
+                ).fetchone()
+            if candidate_row is None:
+                raise ValueError(f"State event candidate not found: {candidate_id}")
+            candidate = self._state_candidate_from_row(dict(candidate_row))
+            subject = self.get_or_create_state_subject(
+                namespace=candidate.namespace,
+                subject_type=candidate.subject_type,
+                subject_key=candidate.subject_key,
+                display_name=candidate.subject_key,
+            )
+            event = self.insert_state_event(
+                namespace=candidate.namespace,
+                candidate_id=candidate.id,
+                subject_id=subject.id,
+                source_kind=candidate.source_kind,
+                source_id=candidate.source_id,
+                source_hash=candidate.source_hash,
+                source_span_hash=candidate.source_span_hash,
+                subject_type=candidate.subject_type,
+                subject_key=candidate.subject_key,
+                state_key=candidate.state_key,
+                event_type=candidate.event_type,
+                value=candidate.value,
+                value_text=candidate.value_text,
+                prior_value_text=candidate.prior_value_text,
+                effective_at=candidate.effective_at,
+                observed_at=candidate.observed_at,
+                actor_role=candidate.actor_role,
+                confidence=candidate.confidence,
+                trust_tier=candidate.trust_tier,
+                extractor_version=candidate.extractor_version,
+                metadata=candidate.metadata,
+            )
+            with self.conn.cursor() as cur:
+                cur.execute("UPDATE state_event_candidates SET status = 'accepted' WHERE id = %s", (candidate_id,))
+            return event
 
     def insert_state_event(
         self,
@@ -1316,82 +1330,84 @@ class KontextRepository:
         extractor_version: str = "",
         metadata: dict | None = None,
     ) -> StateEvent:
-        normalized_namespace = normalize_namespace(namespace)
-        normalized_state_key = normalize_state_key(state_key)
-        normalized_event_type = validate_event_type(event_type)
-        payload = dict(value or {})
-        payload_hash = make_value_hash(payload)
-        if subject_id is None:
-            subject = self.get_or_create_state_subject(
+        with self.transaction():
+            normalized_namespace = normalize_namespace(namespace)
+            normalized_state_key = normalize_state_key(state_key)
+            normalized_event_type = validate_event_type(event_type)
+            payload = dict(value or {})
+            payload_hash = make_value_hash(payload)
+            if subject_id is None:
+                subject = self.get_or_create_state_subject(
+                    namespace=normalized_namespace,
+                    subject_type=subject_type,
+                    subject_key=subject_key,
+                    display_name=normalize_subject_key(subject_key),
+                )
+                subject_id = subject.id
+            if subject_id is None:
+                raise ValueError("state event requires subject_id")
+            stable_event_hash = make_event_hash(
                 namespace=normalized_namespace,
-                subject_type=subject_type,
-                subject_key=subject_key,
-                display_name=normalize_subject_key(subject_key),
+                subject_id=subject_id,
+                source_hash=source_hash,
+                source_span_hash=source_span_hash,
+                extractor_version=extractor_version,
+                state_key=normalized_state_key,
+                event_type=normalized_event_type,
+                value_hash=payload_hash,
+                effective_at=effective_at,
+                observed_at=observed_at,
             )
-            subject_id = subject.id
-        if subject_id is None:
-            raise ValueError("state event requires subject_id")
-        stable_event_hash = make_event_hash(
-            namespace=normalized_namespace,
-            subject_id=subject_id,
-            source_hash=source_hash,
-            source_span_hash=source_span_hash,
-            extractor_version=extractor_version,
-            state_key=normalized_state_key,
-            event_type=normalized_event_type,
-            value_hash=payload_hash,
-        )
-        with self.conn.cursor(row_factory=dict_row) as cur:
-            row = cur.execute(
-                """
-                INSERT INTO state_events (
-                    candidate_id, namespace, subject_id, source_kind, source_id,
-                    source_hash, source_span_hash, event_hash, state_key, event_type,
-                    value, value_text, value_hash, prior_value_text, effective_at,
-                    observed_at, actor_role, confidence, trust_tier, status,
-                    extractor_version, metadata
-                )
-                VALUES (
-                    %s, %s, %s, %s, %s,
-                    %s, %s, %s, %s, %s,
-                    %s::jsonb, %s, %s, %s, %s,
-                    %s, %s, %s, %s, 'accepted',
-                    %s, %s::jsonb
-                )
-                ON CONFLICT (namespace, event_hash) DO NOTHING
-                RETURNING *
-                """,
-                (
-                    candidate_id,
-                    normalized_namespace,
-                    subject_id,
-                    str(source_kind or ""),
-                    str(source_id or ""),
-                    str(source_hash or ""),
-                    str(source_span_hash or ""),
-                    stable_event_hash,
-                    normalized_state_key,
-                    normalized_event_type,
-                    json.dumps(payload, sort_keys=True),
-                    str(value_text or ""),
-                    payload_hash,
-                    str(prior_value_text or ""),
-                    effective_at,
-                    observed_at,
-                    str(actor_role or ""),
-                    float(confidence or 0.0),
-                    str(trust_tier or "extracted_low"),
-                    str(extractor_version or ""),
-                    json.dumps(metadata or {}, sort_keys=True),
-                ),
-            ).fetchone()
-            if row is None:
+            with self.conn.cursor(row_factory=dict_row) as cur:
                 row = cur.execute(
-                    "SELECT * FROM state_events WHERE namespace = %s AND event_hash = %s",
-                    (normalized_namespace, stable_event_hash),
+                    """
+                    INSERT INTO state_events (
+                        candidate_id, namespace, subject_id, source_kind, source_id,
+                        source_hash, source_span_hash, event_hash, state_key, event_type,
+                        value, value_text, value_hash, prior_value_text, effective_at,
+                        observed_at, actor_role, confidence, trust_tier, status,
+                        extractor_version, metadata
+                    )
+                    VALUES (
+                        %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s,
+                        %s::jsonb, %s, %s, %s, %s,
+                        %s, %s, %s, %s, 'accepted',
+                        %s, %s::jsonb
+                    )
+                    ON CONFLICT (namespace, event_hash) DO NOTHING
+                    RETURNING *
+                    """,
+                    (
+                        candidate_id,
+                        normalized_namespace,
+                        subject_id,
+                        str(source_kind or ""),
+                        str(source_id or ""),
+                        str(source_hash or ""),
+                        str(source_span_hash or ""),
+                        stable_event_hash,
+                        normalized_state_key,
+                        normalized_event_type,
+                        json.dumps(payload, sort_keys=True),
+                        str(value_text or ""),
+                        payload_hash,
+                        str(prior_value_text or ""),
+                        effective_at,
+                        observed_at,
+                        str(actor_role or ""),
+                        float(confidence or 0.0),
+                        str(trust_tier or "extracted_low"),
+                        str(extractor_version or ""),
+                        json.dumps(metadata or {}, sort_keys=True),
+                    ),
                 ).fetchone()
-        self.conn.commit()
-        return self._state_event_from_row(dict(row))
+                if row is None:
+                    row = cur.execute(
+                        "SELECT * FROM state_events WHERE namespace = %s AND event_hash = %s",
+                        (normalized_namespace, stable_event_hash),
+                    ).fetchone()
+            return self._state_event_from_row(dict(row))
 
     def insert_state_event_edge(
         self,
@@ -1411,7 +1427,7 @@ class KontextRepository:
         with self.conn.cursor(row_factory=dict_row) as cur:
             event_rows = cur.execute(
                 """
-                SELECT id, namespace, subject_id
+                SELECT id, namespace, subject_id, state_key
                 FROM state_events
                 WHERE id = ANY(%s::uuid[])
                 """,
@@ -1426,6 +1442,11 @@ class KontextRepository:
                 raise ValueError("state edge namespace must match source and target events")
             if source_event["subject_id"] != target_event["subject_id"]:
                 raise ValueError("state edge source and target must share subject_id")
+            if (
+                normalize_state_key(source_event["state_key"]) != normalized_state_key
+                or normalize_state_key(target_event["state_key"]) != normalized_state_key
+            ):
+                raise ValueError("state edge state_key must match source and target events")
             row = cur.execute(
                 """
                 INSERT INTO state_event_edges (
@@ -1448,7 +1469,7 @@ class KontextRepository:
                     json.dumps(metadata or {}, sort_keys=True),
                 ),
             ).fetchone()
-        self.conn.commit()
+        self._commit()
         return self._state_edge_from_row(dict(row))
 
     def rebuild_current_state_projection(
@@ -1525,7 +1546,7 @@ class KontextRepository:
                     ),
                 ).fetchone()
                 saved.append(self._current_state_fact_from_row(dict(row)))
-        self.conn.commit()
+        self._commit()
         return saved
 
     def project_typed_state(

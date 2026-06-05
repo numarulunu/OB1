@@ -33,3 +33,22 @@ tools/kontext-v2/_prebatch_*/
 # Local QA scratch and timestamped backup debris
 _qa_*/
 *.bak-*
+
+# Local agent/editor/runtime scratch
+.claude/
+.serena/
+.vscode/
+.pytest_cache/
+output/
+test-results/
+handoffs/
+UsersGaming
+
+# Generated reports and local archives
+tools/kontext-v2/reports/
+*.log
+*.tmp
+*.zip
+*.7z
+*.tar
+*.tgz

@@ -1,0 +1,39 @@
+FROM kontext:latest
+WORKDIR /app
+ENV KONTEXT_CONTEXT_MODE_ENABLED=1
+ENV KONTEXT_CONTEXT_MODE_INSIGHT_URL=http://localhost:4747
+RUN mkdir -p /app/scripts
+RUN mkdir -p /app/eval
+COPY kontext_v2/dashboard_snapshot.py /app/kontext_v2/dashboard_snapshot.py
+COPY kontext_v2/http_api.py /app/kontext_v2/http_api.py
+COPY kontext_v2/intake.py /app/kontext_v2/intake.py
+COPY kontext_v2/mcp_bridge.py /app/kontext_v2/mcp_bridge.py
+COPY kontext_v2/project_observations.py /app/kontext_v2/project_observations.py
+COPY kontext_v2/repository.py /app/kontext_v2/repository.py
+COPY kontext_v2/retention.py /app/kontext_v2/retention.py
+COPY kontext_v2/retrieval.py /app/kontext_v2/retrieval.py
+COPY kontext_v2/retrieval_shadow.py /app/kontext_v2/retrieval_shadow.py
+COPY kontext_v2/schema.py /app/kontext_v2/schema.py
+COPY scripts/judged_batch_verify.py /app/scripts/judged_batch_verify.py
+COPY scripts/judged_benchmark_run.py /app/scripts/judged_benchmark_run.py
+COPY scripts/judged_benchmark_verify.py /app/scripts/judged_benchmark_verify.py
+COPY scripts/kontext_cutover_readiness.py /app/scripts/kontext_cutover_readiness.py
+COPY scripts/kontext_goal_scorecard.py /app/scripts/kontext_goal_scorecard.py
+COPY scripts/regression_canary.py /app/scripts/regression_canary.py
+COPY scripts/retrieval_query_retention.py /app/scripts/retrieval_query_retention.py
+COPY scripts/retrieval_shadow_report.py /app/scripts/retrieval_shadow_report.py
+COPY scripts/kontext_ob1_retrieval_quality_gate.py /app/scripts/kontext_ob1_retrieval_quality_gate.py
+COPY eval/ob1_retrieval_quality_cases.json /app/eval/ob1_retrieval_quality_cases.json
+COPY cloud/dashboard_snapshot.py /app/cloud/dashboard_snapshot.py
+COPY cloud/dashboard.py /app/cloud/dashboard.py
+COPY static_dashboard/index.html /app/static_dashboard/index.html
+COPY static_dashboard/src/app.jsx /app/static_dashboard/src/app.jsx
+COPY static_dashboard/src/app.css /app/static_dashboard/src/app.css
+COPY static_dashboard/src/shell.jsx /app/static_dashboard/src/shell.jsx
+COPY static_dashboard/src/data-adapter.js /app/static_dashboard/src/data-adapter.js
+COPY static_dashboard/src/activity-chart.js /app/static_dashboard/src/activity-chart.js
+COPY static_dashboard/src/view-overview.jsx /app/static_dashboard/src/view-overview.jsx
+COPY static_dashboard/src/view-entries.jsx /app/static_dashboard/src/view-entries.jsx
+COPY static_dashboard/src/view-decay.jsx /app/static_dashboard/src/view-decay.jsx
+COPY static_dashboard/src/view-settings.jsx /app/static_dashboard/src/view-settings.jsx
+COPY static_dashboard/data.js /app/static_dashboard/data.js

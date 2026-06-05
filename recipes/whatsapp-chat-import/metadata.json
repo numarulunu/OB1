@@ -1,0 +1,7 @@
+{
+  "name": "whatsapp-chat-import",
+  "version": "1.0.0",
+  "description": "Import WhatsApp text exports into Open Brain as distilled, duplicate-checked memories.",
+  "language": "python",
+  "entrypoint": "import-whatsapp.py"
+}

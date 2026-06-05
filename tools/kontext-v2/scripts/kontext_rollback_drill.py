@@ -8,6 +8,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+STATE_FEATURE_FLAG_NAMES = (
+    "KONTEXT_STATE_MODEL_ENABLED",
+    "KONTEXT_STATE_INGESTION_ENABLED",
+    "KONTEXT_STATE_AUTO_ACCEPT_ENABLED",
+    "KONTEXT_STATE_ROUTING_ENABLED",
+    "KONTEXT_TYPED_STATE_V2",
+    "KONTEXT_TYPED_OBJECT_SUMMARY",
+    "KONTEXT_BENCHMARK_STATE_MODEL_ENABLED",
+)
+FALSE_VALUES = {"", "0", "false", "no", "off", "none", "null"}
+
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -107,6 +118,30 @@ def compose_write_enabled(compose_text: str) -> bool:
     return "KONTEXT_MCP_WRITE_PROFILES" in compose_text or "KONTEXT_MCP_WRITE_ENABLED_PROFILES" in compose_text
 
 
+def enabled_state_feature_flags(compose_text: str) -> list[str]:
+    enabled: list[str] = []
+    for raw_line in compose_text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("- "):
+            line = line[2:].strip()
+        for name in STATE_FEATURE_FLAG_NAMES:
+            value: str | None = None
+            if line == name:
+                value = "1"
+            elif line.startswith(f"{name}:"):
+                value = line.split(":", 1)[1]
+            elif line.startswith(f"{name}="):
+                value = line.split("=", 1)[1]
+            if value is None:
+                continue
+            clean_value = value.strip().strip('"').strip("'").lower()
+            if clean_value not in FALSE_VALUES:
+                enabled.append(name)
+    return sorted(set(enabled))
+
+
 def build_rollback_drill_report(
     *,
     rollback_archive: str | Path,
@@ -163,6 +198,19 @@ def build_rollback_drill_report(
     if write_enabled:
         attention.append("write mode is still enabled")
 
+    enabled_flags = enabled_state_feature_flags(current_text)
+    add_check(
+        checks,
+        "state_feature_flags_disabled",
+        "pass" if not enabled_flags else "fail",
+        "State, typed, and benchmark feature flags are disabled"
+        if not enabled_flags
+        else "State, typed, or benchmark feature flags are still enabled",
+        {"enabled_flags": enabled_flags},
+    )
+    if enabled_flags:
+        attention.append("state, typed, or benchmark feature flags are still enabled")
+
     archive = archive_evidence(archive_path)
     backup_exists = backup_path.exists()
     artifacts_ok = bool(archive["archive_readable"] and archive["compose_member_present"] and backup_exists)
@@ -182,7 +230,13 @@ def build_rollback_drill_report(
         attention.append("rollback artifacts are incomplete")
 
     backup_text = backup_path.read_text(encoding="utf-8") if backup_exists else ""
-    restore_ok = bool(backup_text and not compose_write_enabled(backup_text) and archive.get("archive_readable"))
+    backup_enabled_flags = enabled_state_feature_flags(backup_text)
+    restore_ok = bool(
+        backup_text
+        and not compose_write_enabled(backup_text)
+        and not backup_enabled_flags
+        and archive.get("archive_readable")
+    )
     add_check(
         checks,
         "restore_sandbox",
@@ -191,6 +245,7 @@ def build_rollback_drill_report(
         {
             "compose_backup_readable": bool(backup_text),
             "compose_backup_write_profile_present": compose_write_enabled(backup_text),
+            "compose_backup_enabled_state_flags": backup_enabled_flags,
             "archive_member_count": safe_int(archive.get("member_count")),
         },
     )

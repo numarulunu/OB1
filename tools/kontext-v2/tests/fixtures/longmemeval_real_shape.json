@@ -1,0 +1,62 @@
+[
+  {
+    "question_id": "lme-q-1",
+    "question_type": "single-session-user",
+    "question": "Where did Riley store the blue notebook?",
+    "answer": "In the cedar desk drawer.",
+    "question_date": "2024-06-03",
+    "answer_session_ids": ["session_b"],
+    "haystack_session_ids": ["session_b", "session_a"],
+    "haystack_dates": ["2024-06-02", "2024-05-30"],
+    "haystack_sessions": [
+      [
+        {
+          "role": "user",
+          "content": "I moved the blue notebook into the cedar desk drawer.",
+          "has_answer": true
+        },
+        {
+          "role": "assistant",
+          "content": "The blue notebook is now in the cedar desk drawer.",
+          "has_answer": true
+        }
+      ],
+      [
+        {
+          "role": "user",
+          "content": "I bought a red notebook for the studio shelf.",
+          "has_answer": false
+        },
+        {
+          "role": "assistant",
+          "content": "The red notebook belongs on the studio shelf.",
+          "has_answer": false
+        }
+      ]
+    ]
+  },
+  {
+    "question_id": "lme-q-2",
+    "question_type": "temporal-reasoning",
+    "question": "Which tea did Morgan prefer after the spring tasting?",
+    "answer": "Jasmine tea.",
+    "question_date": "2024-04-12",
+    "answer_session_ids": ["session_c"],
+    "haystack_session_ids": ["session_c"],
+    "haystack_dates": ["2024-04-10"],
+    "haystack_sessions": [
+      [
+        {
+          "role": "user",
+          "content": "After the spring tasting, jasmine tea became my favorite evening tea.",
+          "has_answer": true
+        },
+        {
+          "role": "assistant",
+          "content": "Morgan prefers jasmine tea after the spring tasting.",
+          "has_answer": true
+        }
+      ]
+    ]
+  }
+]

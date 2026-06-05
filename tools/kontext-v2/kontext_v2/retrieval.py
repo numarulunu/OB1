@@ -925,11 +925,17 @@ def state_query_route(query: str) -> str:
     return "current_state"
 
 
+def _state_projection_route_label(route: str) -> str:
+    return "state_projection" if route == "current_state" else "state_plus_history"
+
+
 def state_projection_rows(repo: KontextRepository, query: str, limit: int, *, namespace: str | None = None) -> list[dict]:
-    if not state_projection_routing_enabled() or state_query_route(query) != "current_state":
+    route = state_query_route(query)
+    if not state_projection_routing_enabled() or route == "memory_search":
         return []
     if not hasattr(repo, "search_current_state_facts"):
         return []
+    route_label = _state_projection_route_label(route)
     projection_namespace = normalize_namespace(namespace) if namespace is not None else state_projection_namespace()
     try:
         rows = repo.search_current_state_facts(query, namespace=projection_namespace, top_k=limit)
@@ -939,7 +945,7 @@ def state_projection_rows(repo: KontextRepository, query: str, limit: int, *, na
     for index, row in enumerate(rows, start=1):
         clean_row = dict(row)
         metadata = row_metadata(clean_row)
-        metadata["retrieval_path"] = "state_projection"
+        metadata["retrieval_path"] = route_label
         current_value = (
             clean_row.get("current_value")
             or clean_row.get("fact_value")
@@ -988,7 +994,7 @@ def state_projection_rows(repo: KontextRepository, query: str, limit: int, *, na
         clean_row["cancelled_event_ids"] = [str(item) for item in cancelled_event_ids]
         clean_row["_retrieval_score"] = STATE_PROJECTION_RETRIEVAL_SCORE
         clean_row["_retrieval_rank"] = index
-        clean_row["_retrieval_path"] = "state_projection"
+        clean_row["_retrieval_path"] = route_label
         if typed_state_v2_enabled():
             clean_row = attach_typed_state_metadata(clean_row)
         projected.append(clean_row)
@@ -1057,11 +1063,12 @@ def search_memories(
             )
         results.append(row)
     if projected_rows:
+        route = state_query_route(query)
         projected_statuses = {
             str(row.get("state_status") or row_metadata(row).get("state_status") or "").strip().lower()
             for row in projected_rows
         }
-        if projected_statuses & {"cancelled", "ambiguous"}:
+        if route == "current_state" and projected_statuses & {"cancelled", "ambiguous"}:
             return projected_rows[:limit]
         return merge_candidate_rows(projected_rows, results)[:limit]
     return results
