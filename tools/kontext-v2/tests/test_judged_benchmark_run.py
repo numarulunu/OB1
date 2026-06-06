@@ -3076,7 +3076,7 @@ def test_beam_information_extraction_skips_current_state_path(tmp_path):
     assert_public_report_has_no_raw_payload(result)
 
 
-def test_beam_information_extraction_candidate_handles_broad_fact_question():
+def test_beam_information_extraction_candidate_rejects_short_broad_or_cue_free_fact_question():
     module = load_module()
 
     memories = [
@@ -3097,12 +3097,34 @@ def test_beam_information_extraction_candidate_handles_broad_fact_question():
         {"category": "information_extraction", "question": "Summarize the staging token details from the conversation."},
         memories,
     )
-    assert "citadel-42" in broad_answer
-    assert "invoice sync" in broad_answer
+    assert broad_answer == ""
     cue_free_answer = module.beam_information_extraction_candidate_answer(
         {"category": "information_extraction", "question": "Answer the staging token handoff from the conversation."},
         memories,
     )
+    assert cue_free_answer == ""
+
+
+def test_beam_information_extraction_candidate_keeps_full_cue_free_fact_span():
+    module = load_module()
+
+    memories = [
+        {
+            "memory": (
+                "assistant: The staging token details were citadel-42 for invoice sync, kept in the deployment "
+                "handoff, scoped to the billing workspace, tied to the release checklist, reviewed by the platform "
+                "operator, preserved for the production replay, and explicitly marked as the value to use when the "
+                "staging-token handoff question appears again during benchmark replay."
+            ),
+            "metadata": {"source_ids": ["turn-1"]},
+        }
+    ]
+
+    cue_free_answer = module.beam_information_extraction_candidate_answer(
+        {"category": "information_extraction", "question": "Answer the staging token handoff from the conversation."},
+        memories,
+    )
+
     assert "citadel-42" in cue_free_answer
     assert "invoice sync" in cue_free_answer
 
@@ -3243,7 +3265,7 @@ def test_beam_information_extraction_candidate_direct_bypasses_selector(tmp_path
     assert_public_report_has_no_raw_payload(result)
 
 
-def test_beam_information_extraction_candidate_direct_bypasses_broad_question(tmp_path):
+def test_beam_information_extraction_extractive_candidate_can_be_selected_for_broad_question(tmp_path):
     module = load_module()
     bundle_path = tmp_path / "beam-private.json"
     bundle_path.write_text(
@@ -3284,7 +3306,11 @@ def test_beam_information_extraction_candidate_direct_bypasses_broad_question(tm
             assert "BEAM evidence windows" in user_prompt
             return {"text": "Assistant: citadel-42 for invoice sync.", "usage": {"prompt_tokens": 13, "completion_tokens": 4}}
         if "select the best beam candidate answer" in system_prompt:
-            raise AssertionError("broad information extraction candidate should bypass selector")
+            assert "Kind: extractive" in user_prompt
+            return {
+                "text": '{"selected_id":"candidate_2","reason_code":"extractive_direct","confidence":0.91}',
+                "usage": {"prompt_tokens": 11, "completion_tokens": 3},
+            }
         if "strict benchmark judge" in system_prompt:
             assert "citadel-42 for invoice sync" in user_prompt
             return {"text": '{"correct": true, "score": 1.0}', "usage": {"prompt_tokens": 9, "completion_tokens": 3}}
@@ -3309,11 +3335,11 @@ def test_beam_information_extraction_candidate_direct_bypasses_broad_question(tm
     cutoff = result["questions"][0]["cutoff_results"]["20"]
     rendered = json.dumps(result)
 
-    assert cutoff["beam_answer_candidate_count"] == 3
-    assert cutoff["beam_answer_selected_candidate_index"] == 3
-    assert cutoff["beam_answer_selected_candidate_kind"] == "information_extraction"
-    assert cutoff["beam_answer_selector_status"] == "information_extraction_direct_bypass"
-    assert cutoff["beam_extractive_candidate_used"] is False
+    assert cutoff["beam_answer_candidate_count"] == 2
+    assert cutoff["beam_answer_selected_candidate_index"] == 2
+    assert cutoff["beam_answer_selected_candidate_kind"] == "extractive"
+    assert cutoff["beam_answer_selector_status"] == "ok"
+    assert cutoff["beam_extractive_candidate_used"] is True
     assert "citadel-42" not in rendered
     assert_public_report_has_no_raw_payload(result)
 
@@ -4613,6 +4639,138 @@ def test_beam_typed_projection_candidate_returns_direct_sentence_from_narrow_mem
     assert answer == "User: I prefer the citadel staging interface for invoice replies."
 
 
+def test_beam_typed_projection_candidate_shortens_long_excerpt_to_direct_span():
+    module = load_module()
+    question = {
+        "category": "preference_following",
+        "question": "What staging interface should dashboard invoice replies use?",
+    }
+    long_projection = (
+        "User: Dashboard invoice replies use the citadel staging interface "
+        + ("with unrelated archived dashboard notes " * 40)
+    )
+
+    answer = module.beam_typed_projection_candidate_answer(
+        question,
+        [{"memory": long_projection, "metadata": {"source_ids": ["turn-42"]}}],
+    )
+
+    assert "citadel staging interface" in answer
+    assert len(answer) <= module.BEAM_DIRECT_EVIDENCE_CANDIDATE_MAX_CHARS
+
+
+def test_beam_version_constraint_candidate_preserves_current_library_choice():
+    module = load_module()
+    question = {
+        "category": "preference_following",
+        "question": "How should I scale my language detection API under higher concurrent load?",
+    }
+    memories = [
+        {
+            "memory": (
+                "User: I switched from langdetect v1.0.1 to franc v6.1.0 for better "
+                "multi-language support in the language detection API."
+            )
+        }
+    ]
+
+    answer = module.beam_version_constraint_candidate_answer(question, memories)
+
+    assert "franc v6.1.0" in answer
+    assert "avoid replacing" in answer
+    assert "scale" in answer.lower()
+
+
+def test_beam_version_pair_parser_cleans_dependency_name_phrases():
+    module = load_module()
+
+    assert module.clean_beam_version_name("currently using FastAPI") == "FastAPI"
+    assert module.clean_beam_version_name("TOTP using PyOTP") == "PyOTP"
+    assert module.clean_beam_version_name("the official Python") == "Python"
+    assert module.clean_beam_version_name("currently using version") == ""
+
+
+def test_beam_version_constraint_candidate_ignores_unrelated_current_state_preferences():
+    module = load_module()
+    question = {
+        "category": "preference_following",
+        "question": "Which staging interface should invoice replies use?",
+    }
+    memories = [
+        {
+            "memory": (
+                "User: I switched from langdetect v1.0.1 to franc v6.1.0 for better "
+                "multi-language support in the language detection API."
+            )
+        }
+    ]
+
+    assert module.beam_version_constraint_candidate_answer(question, memories) == ""
+
+
+def test_beam_dependency_versions_candidate_lists_exact_versions():
+    module = load_module()
+    question = {
+        "category": "instruction_following",
+        "question": "Which libraries are we currently using in the project?",
+    }
+    memories = [
+        {
+            "memory": (
+                "Project dependencies: PyOTP v2.6.0, FastAPI v0.85, "
+                "Scrapy v2.7.1, HuggingFace Transformers v4.26.1, Redis v6.2.6."
+            )
+        }
+    ]
+
+    answer = module.beam_dependency_versions_candidate_answer(question, memories)
+
+    assert "PyOTP v2.6.0" in answer
+    assert "FastAPI v0.85" in answer
+    assert "Scrapy v2.7.1" in answer
+    assert "HuggingFace Transformers v4.26.1" in answer
+    assert "Redis v6.2.6" in answer
+
+
+def test_beam_dependency_versions_candidate_prefers_more_specific_duplicate_version():
+    module = load_module()
+    question = {
+        "category": "instruction_following",
+        "question": "Which libraries are we currently using in the project?",
+    }
+    memories = [
+        {
+            "memory": (
+                "We are using Redis v6.2 in an old note. "
+                "Current dependency list: Redis v6.2.6 and FastAPI v0.85."
+            )
+        }
+    ]
+
+    answer = module.beam_dependency_versions_candidate_answer(question, memories)
+
+    assert "Redis v6.2.6" in answer
+    assert "Redis v6.2;" not in answer
+
+
+def test_beam_dependency_versions_candidate_ignores_information_extraction_questions():
+    module = load_module()
+    question = {
+        "category": "information_extraction",
+        "question": "Which libraries were mentioned in the conversation?",
+    }
+    memories = [
+        {
+            "memory": (
+                "Project dependencies: PyOTP v2.6.0, FastAPI v0.85, "
+                "Scrapy v2.7.1, HuggingFace Transformers v4.26.1, Redis v6.2.6."
+            )
+        }
+    ]
+
+    assert module.beam_dependency_versions_candidate_answer(question, memories) == ""
+
+
 def test_beam_trusted_typed_projection_candidate_index_accepts_clear_current_state():
     module = load_module()
     question = {
@@ -4627,7 +4785,7 @@ def test_beam_trusted_typed_projection_candidate_index_accepts_clear_current_sta
     assert module.beam_trusted_typed_projection_candidate_index(question, candidates) == 2
 
 
-def test_beam_trusted_typed_projection_candidate_index_rejects_strong_overlap_without_marker():
+def test_beam_trusted_typed_projection_candidate_index_accepts_strong_overlap_without_marker():
     module = load_module()
     question = {
         "category": "preference_following",
@@ -4642,7 +4800,7 @@ def test_beam_trusted_typed_projection_candidate_index_rejects_strong_overlap_wi
         },
     ]
 
-    assert module.beam_trusted_typed_projection_candidate_index(question, candidates) == 0
+    assert module.beam_trusted_typed_projection_candidate_index(question, candidates) == 2
 
 
 def test_beam_trusted_typed_projection_candidate_index_ignores_verbose_competing_candidates():
@@ -4691,7 +4849,7 @@ def test_beam_trusted_typed_projection_candidate_index_rejects_ambiguous_or_unsu
     ) == 0
 
 
-def test_beam_typed_projection_candidate_adds_deterministic_answer_without_extra_answer_call(tmp_path):
+def test_beam_typed_projection_candidate_adds_selector_candidate_without_extra_answer_call(tmp_path):
     module = load_module()
     bundle_path = tmp_path / "beam-private.json"
     bundle_path.write_text(
@@ -4735,7 +4893,10 @@ def test_beam_typed_projection_candidate_adds_deterministic_answer_without_extra
         system_prompt = payload["messages"][0]["content"].lower()
         user_prompt = payload["messages"][1]["content"]
         if "select the best beam candidate answer" in system_prompt:
-            raise AssertionError("trusted typed projection should bypass the selector")
+            return {
+                "text": '{"selected_id":"candidate_3","reason_code":"typed_projection_supported","confidence":0.91}',
+                "usage": {"prompt_tokens": 15, "completion_tokens": 4},
+            }
         if "resolve beam current state" in system_prompt:
             return {
                 "text": json.dumps(
@@ -4791,13 +4952,13 @@ def test_beam_typed_projection_candidate_adds_deterministic_answer_without_extra
     cutoff = result["questions"][0]["cutoff_results"]["20"]
     rendered = json.dumps(result)
 
-    assert len(calls) == 5
+    assert len(calls) == 6
     assert cutoff["beam_typed_projection_candidate"] is True
     assert cutoff["beam_typed_projection_candidate_used"] is True
     assert cutoff["beam_answer_candidate_count"] == 3
     assert cutoff["beam_answer_selected_candidate_index"] == 3
     assert cutoff["beam_answer_selected_candidate_kind"] == "typed_projection"
-    assert cutoff["beam_answer_selector_status"] == "typed_projection_direct_bypass"
+    assert cutoff["beam_answer_selector_status"] == "ok"
     assert cutoff["generated_answer_hash"] == module.stable_hash("User: I prefer the citadel staging interface.")
     assert "citadel staging interface" not in rendered
     assert "harbor interface" not in rendered
@@ -4908,7 +5069,8 @@ def test_beam_typed_projection_candidate_does_not_add_provider_calls_against_fla
     assert len(on_calls) <= len(off_calls)
     assert on_cutoff["beam_answer_candidate_count"] == off_cutoff["beam_answer_candidate_count"] + 1
     assert on_cutoff["beam_typed_projection_candidate"] is True
-    assert on_cutoff["beam_typed_projection_candidate_used"] is True
+    assert on_cutoff["beam_typed_projection_candidate_used"] is False
+    assert on_cutoff["beam_answer_selector_status"] == "ok"
     assert_public_report_has_no_raw_payload(on_result)
 
 
@@ -5094,7 +5256,10 @@ def test_beam_typed_projection_candidate_can_be_selected_after_all_other_candida
         if "answer beam current-state from ranked state memory rows" in system_prompt:
             return {"text": "ranked state memory answer", "usage": {"prompt_tokens": 16, "completion_tokens": 5}}
         if "select the best beam candidate answer" in system_prompt:
-            raise AssertionError("trusted typed projection should bypass the selector")
+            return {
+                "text": '{"selected_id":"candidate_6","reason_code":"typed_projection_supported","confidence":0.91}',
+                "usage": {"prompt_tokens": 15, "completion_tokens": 4},
+            }
         if "strict benchmark judge" in system_prompt:
             assert "citadel staging interface" in user_prompt
             return {"text": '{"correct": true, "score": 1.0}', "usage": {"prompt_tokens": 11, "completion_tokens": 3}}
@@ -5135,7 +5300,7 @@ def test_beam_typed_projection_candidate_can_be_selected_after_all_other_candida
     assert cutoff["beam_answer_candidate_count"] == 6
     assert cutoff["beam_answer_selected_candidate_index"] == 6
     assert cutoff["beam_answer_selected_candidate_kind"] == "typed_projection"
-    assert cutoff["beam_answer_selector_status"] == "typed_projection_direct_bypass"
+    assert cutoff["beam_answer_selector_status"] == "ok"
     assert cutoff["generated_answer_hash"] == module.stable_hash("User: I prefer the citadel staging interface.")
     assert "citadel staging interface" not in rendered
     assert "private reducer direct answer" not in rendered

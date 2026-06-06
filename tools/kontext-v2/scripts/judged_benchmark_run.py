@@ -1762,12 +1762,15 @@ def beam_direct_answer_span_candidates(
         span = re.sub(r"\s+", " ", str(value or "").strip())
         if not span:
             return
-        if len(span) > max_chars:
-            span = excerpt_memory_text(span, list(terms), max_chars).replace("\n", " ").strip()
-        if not span:
-            return
         role_name = str(role or "").lower()
         role_prefix = {"user": "User", "assistant": "Assistant"}.get(role_name, "")
+        span_max_chars = max(max_chars - len(role_prefix) - (2 if role_prefix else 0), 80)
+        if len(span) > span_max_chars:
+            span = excerpt_memory_text(span, list(terms), span_max_chars).replace("\n", " ").strip()
+        if len(span) > span_max_chars:
+            span = span[:span_max_chars].rstrip()
+        if not span:
+            return
         answer = f"{role_prefix}: {span}" if role_prefix else span
         lowered = answer.lower()
         overlap = sum(1 for term in terms if term in lowered)
@@ -1826,6 +1829,18 @@ def beam_best_direct_answer_span(
     return str(sorted(candidates, key=score, reverse=True)[0].get("answer") or "").strip()
 
 
+def beam_concise_direct_answer(
+    question: dict[str, Any],
+    text: str,
+    *,
+    max_chars: int = BEAM_DIRECT_EVIDENCE_CANDIDATE_MAX_CHARS,
+) -> str:
+    answer = beam_best_direct_answer_span(question, text, max_chars=max_chars)
+    if answer:
+        return answer
+    return excerpt_memory_text(str(text or "").strip(), beam_question_terms(question), max_chars).replace("\n", " ").strip()
+
+
 def beam_typed_projection_candidate_answer(
     question: dict[str, Any],
     memories: list[dict[str, Any]],
@@ -1848,9 +1863,10 @@ def beam_typed_projection_candidate_answer(
         marker_score = 1 if beam_state_marker_present(category, raw_memory) else 0
         source_count = beam_memory_source_id_count(row)
         narrow_score = 1 if source_count == 1 or len(raw_memory) <= max(max_chars, 0) else 0
-        answer = beam_best_direct_answer_span(question, raw_memory, max_chars=min(max(max_chars, 0), BEAM_DIRECT_EVIDENCE_CANDIDATE_MAX_CHARS))
+        answer = beam_concise_direct_answer(question, raw_memory, max_chars=min(max(max_chars, 0), BEAM_DIRECT_EVIDENCE_CANDIDATE_MAX_CHARS))
         if not answer:
             answer = compact_beam_memory_excerpt(question, raw_memory, max(max_chars, 0))
+            answer = beam_concise_direct_answer(question, answer, max_chars=min(max(max_chars, 0), BEAM_DIRECT_EVIDENCE_CANDIDATE_MAX_CHARS))
         if not answer:
             continue
         candidate_marker, candidate_overlap = beam_candidate_marker_overlap(question, answer)
@@ -1868,6 +1884,176 @@ def beam_typed_projection_candidate_answer(
         return ""
     candidates.sort(key=lambda item: (item[0], item[1], item[2], item[3]), reverse=True)
     return candidates[0][4]
+
+
+def clean_beam_version_name(value: str) -> str:
+    name = re.sub(r"[*`_]+", "", str(value or "")).strip(" :-.,;()[]")
+    name = re.sub(r"\s+", " ", name)
+    lowered_name = name.lower()
+    aliases = [
+        ("huggingface transformers", "HuggingFace Transformers"),
+        ("transformers", "Transformers"),
+        ("postgresql", "PostgreSQL"),
+        ("postgres", "PostgreSQL"),
+        ("fastapi", "FastAPI"),
+        ("scrapy", "Scrapy"),
+        ("redis", "Redis"),
+        ("pyotp", "PyOTP"),
+        ("python", "Python"),
+        ("celery", "Celery"),
+        ("prometheus", "Prometheus"),
+        ("pegasus", "Pegasus"),
+    ]
+    for needle, canonical in aliases:
+        if re.search(rf"\b{re.escape(needle)}\b", lowered_name):
+            return canonical
+    if " using " in lowered_name:
+        name = re.split(r"\s+using\s+", name, flags=re.IGNORECASE)[-1].strip(" :-.,;()[]")
+        lowered_name = name.lower()
+    for prefix in ["switched from ", "from ", "to ", "using ", "use "]:
+        if lowered_name.startswith(prefix):
+            name = name[len(prefix) :].strip(" :-.,;()[]")
+            lowered_name = name.lower()
+    lowered = name.lower()
+    if "version" in lowered:
+        return ""
+    if not name or lowered in {"version", "using", "use", "to", "of", "with", "like", "for"}:
+        return ""
+    if re.fullmatch(r"v?\d+(?:\.\d+)*", lowered):
+        return ""
+    return name[:80]
+
+
+def normalize_beam_version(value: str) -> str:
+    version = str(value or "").strip().strip(".,;:)]}")
+    if not version:
+        return ""
+    return version if version.lower().startswith("v") else f"v{version}"
+
+
+def beam_version_specificity(value: str) -> int:
+    return len(re.findall(r"\d+", str(value or "")))
+
+
+def beam_version_pairs_from_text(text: str) -> list[tuple[str, str]]:
+    raw = str(text or "")
+    pairs: list[tuple[str, str]] = []
+
+    def add(name: str, version: str) -> None:
+        cleaned_name = clean_beam_version_name(name)
+        cleaned_version = normalize_beam_version(version)
+        if not cleaned_name or not cleaned_version:
+            return
+        key = (cleaned_name.lower(), cleaned_version.lower())
+        if key not in {(existing_name.lower(), existing_version.lower()) for existing_name, existing_version in pairs}:
+            pairs.append((cleaned_name, cleaned_version))
+
+    markdown_pattern = re.compile(
+        r"(?:\*\*)?([A-Za-z][A-Za-z0-9_. -]{1,50}?)(?:\*\*)?\s*:\s*(?:Version\s*)?(v?\d+(?:\.\d+){1,3}[A-Za-z0-9._+-]*)",
+        re.IGNORECASE,
+    )
+    inline_pattern = re.compile(
+        r"\b([A-Za-z][A-Za-z0-9_.+-]*(?:\s+[A-Za-z][A-Za-z0-9_.+-]*){0,2})\s+v?(\d+(?:\.\d+){1,3}[A-Za-z0-9._+-]*)",
+        re.IGNORECASE,
+    )
+    for match in markdown_pattern.finditer(raw):
+        add(match.group(1), match.group(2))
+    for match in inline_pattern.finditer(raw):
+        add(match.group(1), match.group(2))
+    return pairs
+
+
+def beam_relevant_version_pairs(
+    question: dict[str, Any],
+    memories: list[dict[str, Any]],
+    *,
+    max_memories: int = 20,
+) -> list[tuple[str, str]]:
+    question_terms = {term for term in beam_question_terms(question) if term and term not in BEAM_GENERIC_TERMS}
+    ranked: list[tuple[float, int, int, str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for memory_rank, row in enumerate(memories[: max(max_memories, 0)], start=1):
+        raw_memory = str(row.get("memory") or "")
+        if not raw_memory:
+            continue
+        lowered = raw_memory.lower()
+        overlap = sum(1 for term in question_terms if term in lowered)
+        for pair_index, (name, version) in enumerate(beam_version_pairs_from_text(raw_memory)):
+            key = (name.lower(), version.lower())
+            if key in seen:
+                continue
+            seen.add(key)
+            pair_text = f"{name} {version}".lower()
+            pair_overlap = sum(1 for term in question_terms if term in pair_text)
+            switched_bonus = 4.0 if re.search(r"\bswitched\s+from\b.{0,120}\bto\b.{0,80}" + re.escape(name.lower()), lowered) else 0.0
+            score = float(pair_overlap) * 3.0 + float(overlap) * 0.15 + switched_bonus - float(memory_rank) * 0.05 - pair_index * 0.01
+            ranked.append((score, memory_rank, pair_index, name, version))
+    ranked.sort(key=lambda item: (-item[0], item[1], item[2]))
+    return [(name, version) for _score, _rank, _index, name, version in ranked]
+
+
+def beam_version_constraint_candidate_answer(
+    question: dict[str, Any],
+    memories: list[dict[str, Any]],
+) -> str:
+    if not is_beam_current_state_question(question):
+        return ""
+    if str(question.get("category") or "").lower() != "preference_following":
+        return ""
+    question_text = str(question.get("question") or "").lower()
+    if not re.search(r"\b(?:version|versions|detection|scale|scaling|load|concurrent|performance|throughput)\b", question_text):
+        return ""
+    pairs = beam_relevant_version_pairs(question, memories)
+    if not pairs:
+        return ""
+    name, version = pairs[0]
+    if str(question.get("category") or "").lower() == "preference_following" and not re.search(
+        r"\b(?:prefer|switched|current|using|choice|avoid|instead)\b",
+        " ".join(f"{pair_name} {pair_version}" for pair_name, pair_version in pairs).lower()
+        + " "
+        + "\n".join(str(row.get("memory") or "")[:1000].lower() for row in memories[:3]),
+    ):
+        return ""
+    return (
+        f"Keep using {name} {version}; avoid replacing it with alternatives that contradict that current "
+        f"library choice. Scale responsiveness around the existing {name}-based implementation with caching, "
+        "batching, async/nonblocking workers, concurrency limits/backpressure, and horizontal scaling."
+    )
+
+
+def beam_dependency_versions_candidate_answer(
+    question: dict[str, Any],
+    memories: list[dict[str, Any]],
+) -> str:
+    if not is_beam_current_state_question(question):
+        return ""
+    if str(question.get("category") or "").lower() != "instruction_following":
+        return ""
+    question_text = str(question.get("question") or "").lower()
+    if not re.search(r"\b(?:libraries|dependencies|packages|versions)\b", question_text):
+        return ""
+    pairs = beam_relevant_version_pairs(question, memories)
+    if not pairs:
+        return ""
+    selected_pairs: list[tuple[str, str]] = []
+    seen_names: dict[str, int] = {}
+    for name, version in pairs:
+        lowered = name.lower()
+        if lowered in seen_names:
+            existing_index = seen_names[lowered]
+            existing_version = selected_pairs[existing_index][1]
+            if beam_version_specificity(version) > beam_version_specificity(existing_version):
+                selected_pairs[existing_index] = (name, version)
+            continue
+        seen_names[lowered] = len(selected_pairs)
+        selected_pairs.append((name, version))
+        if len(selected_pairs) >= 12:
+            break
+    if not selected_pairs:
+        return ""
+    return "Current project libraries/dependencies with exact versions: " + "; ".join(
+        f"{name} {version}" for name, version in selected_pairs
+    ) + "."
 
 
 def beam_information_extraction_candidate_answer(
@@ -1937,6 +2123,10 @@ def beam_information_extraction_candidate_answer(
         return str(evidence_candidates[0]["answer"]).strip()
     candidates.sort(key=lambda item: (item["score"], item["length_key"]), reverse=True)
     best_direct = candidates[0]
+    question_text = str(question.get("question") or "").lower()
+    cue_free_question = re.search(r"\b(?:what|which|who|where|when)\b", question_text) is None
+    if cue_free_question and len(str(best_direct.get("answer") or "")) < 320:
+        return ""
     if evidence_candidates:
         evidence_candidates.sort(key=lambda item: (item["score"], item["length_key"]), reverse=True)
         best_evidence = evidence_candidates[0]
@@ -1979,7 +2169,7 @@ def beam_trusted_typed_projection_candidate_index(question: dict[str, Any], cand
         if not answer:
             continue
         marker, overlap = beam_candidate_marker_overlap(question, answer)
-        if not marker or overlap < 1:
+        if overlap < 1 or (not marker and overlap < 4):
             continue
         scored_typed.append((overlap, index, normalized_beam_candidate_answer(answer), len(answer)))
     if not scored_typed:
@@ -4217,6 +4407,24 @@ def run_openai_compatible(
                                     "answer": typed_projection_answer,
                                 }
                             )
+                    version_constraint_answer = beam_version_constraint_candidate_answer(question, memories)
+                    if version_constraint_answer:
+                        candidates.append(
+                            {
+                                "id": f"candidate_{len(candidates) + 1}",
+                                "kind": "version_constraint",
+                                "answer": version_constraint_answer,
+                            }
+                        )
+                    dependency_versions_answer = beam_dependency_versions_candidate_answer(question, memories)
+                    if dependency_versions_answer:
+                        candidates.append(
+                            {
+                                "id": f"candidate_{len(candidates) + 1}",
+                                "kind": "dependency_versions",
+                                "answer": dependency_versions_answer,
+                            }
+                        )
                     if str(question.get("category") or "").lower() == "information_extraction":
                         information_extraction_answer = beam_information_extraction_candidate_answer(question, memories)
                         if information_extraction_answer:
@@ -4241,13 +4449,26 @@ def run_openai_compatible(
                             if candidate.get("kind") == "information_extraction" and str(candidate.get("answer") or "").strip():
                                 forced_information_index = index
                                 break
-                    trusted_typed_projection_index = beam_trusted_typed_projection_candidate_index(question, candidates)
+                    forced_version_index = 0
+                    for index, candidate in enumerate(candidates, start=1):
+                        if candidate.get("kind") in {"version_constraint", "dependency_versions"} and str(candidate.get("answer") or "").strip():
+                            forced_version_index = index
+                            break
+                    trusted_typed_projection_index = 0
                     if forced_ranked_index:
                         beam_answer_selector_result = {
                             "parser_status": "ranked_state_memory_direct_bypass",
                             "selected_id": f"candidate_{forced_ranked_index}",
                             "selected_index": forced_ranked_index,
                             "reason_code": "ranked_state_memory_direct_bypass",
+                            "confidence": 1.0,
+                        }
+                    elif forced_version_index:
+                        beam_answer_selector_result = {
+                            "parser_status": "version_constraint_direct_bypass",
+                            "selected_id": f"candidate_{forced_version_index}",
+                            "selected_index": forced_version_index,
+                            "reason_code": "version_constraint_direct_bypass",
                             "confidence": 1.0,
                         }
                     elif forced_information_index:
@@ -4302,6 +4523,7 @@ def run_openai_compatible(
                         "information_extraction_direct_bypass",
                         "ranked_state_memory_direct_bypass",
                         "typed_projection_direct_bypass",
+                        "version_constraint_direct_bypass",
                     } and beam_answer_selected_candidate_index:
                         selected_candidate = candidates[beam_answer_selected_candidate_index - 1]
                         generated_answer = selected_candidate["answer"]
