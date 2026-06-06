@@ -2981,6 +2981,21 @@ def test_beam_information_extraction_answer_prompt_includes_direct_fact_guidance
     assert "Return one direct answer, not sectioned notes." in user_prompt
 
 
+def test_beam_information_extraction_candidate_requires_singular_fact_question():
+    module = load_module()
+
+    memories = [{"memory": "assistant: The staging token was citadel-42.", "metadata": {"source_ids": ["turn-1"]}}]
+
+    assert module.beam_information_extraction_candidate_answer(
+        {"category": "information_extraction", "question": "Which staging token was mentioned?"},
+        memories,
+    )
+    assert module.beam_information_extraction_candidate_answer(
+        {"category": "information_extraction", "question": "Summarize the staging token details from the conversation."},
+        memories,
+    ) == ""
+
+
 def test_beam_information_extraction_candidate_selector_can_choose_deterministic_candidate(tmp_path):
     module = load_module()
     bundle_path = tmp_path / "beam-private.json"

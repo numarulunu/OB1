@@ -1875,6 +1875,11 @@ def beam_information_extraction_candidate_answer(
 ) -> str:
     if str(question.get("category") or "").lower() != "information_extraction":
         return ""
+    question_text = str(question.get("question") or "").lower()
+    if not re.search(r"\b(?:what|which|who|where|when)\b", question_text):
+        return ""
+    if re.search(r"\b(?:list|summarize|summary|all|items|details|options|examples|what were|which ones)\b", question_text):
+        return ""
     terms = {term for term in beam_question_terms(question) if term and term not in BEAM_GENERIC_TERMS}
     candidates: list[tuple[float, int, str]] = []
     for memory_rank, row in enumerate(memories[: max(max_memories, 0)], start=1):
