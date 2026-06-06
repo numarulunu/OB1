@@ -1762,6 +1762,49 @@ def beam_typed_projection_candidate_answer(
     return compact_beam_memory_excerpt(question, candidates[0][3], max(max_chars, 0))
 
 
+def normalized_beam_candidate_answer(value: str) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip().lower())
+
+
+def beam_candidate_marker_overlap(question: dict[str, Any], answer: str) -> tuple[bool, int]:
+    text = str(answer or "")
+    lowered = text.lower()
+    marker = beam_state_marker_present(str(question.get("category") or ""), text)
+    terms = {term for term in beam_question_terms(question) if term and term not in BEAM_GENERIC_TERMS}
+    overlap = sum(1 for term in terms if term in lowered)
+    return marker, overlap
+
+
+def beam_trusted_typed_projection_candidate_index(question: dict[str, Any], candidates: list[dict[str, str]]) -> int:
+    if not is_beam_current_state_question(question):
+        return 0
+    scored_typed: list[tuple[int, int, str]] = []
+    for index, candidate in enumerate(candidates, start=1):
+        if str(candidate.get("kind") or "") != "typed_projection":
+            continue
+        answer = str(candidate.get("answer") or "").strip()
+        if not answer:
+            continue
+        marker, overlap = beam_candidate_marker_overlap(question, answer)
+        if not marker or overlap < 2:
+            continue
+        scored_typed.append((overlap, index, normalized_beam_candidate_answer(answer)))
+    if not scored_typed:
+        return 0
+    scored_typed.sort(key=lambda item: (-item[0], item[1]))
+    typed_overlap, typed_index, typed_answer = scored_typed[0]
+    for index, candidate in enumerate(candidates, start=1):
+        if index == typed_index:
+            continue
+        answer = str(candidate.get("answer") or "").strip()
+        if not answer or normalized_beam_candidate_answer(answer) == typed_answer:
+            continue
+        marker, overlap = beam_candidate_marker_overlap(question, answer)
+        if marker and overlap >= typed_overlap:
+            return 0
+    return typed_index
+
+
 def beam_resolved_state_lines(resolved_state: dict[str, Any] | None) -> list[str]:
     if not isinstance(resolved_state, dict):
         return []
@@ -1851,6 +1894,48 @@ def beam_verified_direct_answer(
     if verdict == "rejected":
         return "", "verifier_rejected"
     return "", "verifier_uncertain"
+
+
+def beam_apply_state_verifier_local_override(
+    resolved_state: dict[str, Any] | None,
+    verifier_state: dict[str, Any] | None,
+    ledger_events: list[dict[str, Any]],
+) -> tuple[dict[str, Any] | None, bool]:
+    if not isinstance(resolved_state, dict) or not isinstance(verifier_state, dict):
+        return verifier_state, False
+    if str(resolved_state.get("parser_status") or "").strip() != "ok":
+        return verifier_state, False
+    if str(verifier_state.get("parser_status") or "").strip() != "ok":
+        return verifier_state, False
+    if str(verifier_state.get("verdict") or "").strip().lower() != "uncertain":
+        return verifier_state, False
+    if not str(resolved_state.get("direct_answer") or "").strip():
+        return verifier_state, False
+    support_hashes = beam_state_support_hashes(resolved_state)
+    if not support_hashes or len(support_hashes) > BEAM_DIRECT_BYPASS_MAX_SUPPORT_HASHES:
+        return verifier_state, False
+    ledger_hashes = {
+        str(event.get("event_hash") or "").strip()
+        for event in ledger_events
+        if str(event.get("event_hash") or "").strip()
+    }
+    if not ledger_hashes or not set(support_hashes).issubset(ledger_hashes):
+        return verifier_state, False
+    try:
+        confidence = float(verifier_state.get("confidence") or 0.0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    overridden = dict(verifier_state)
+    overridden.update(
+        {
+            "verdict": "valid",
+            "corrected_direct_answer": "",
+            "supporting_event_hashes": support_hashes,
+            "reason_code": "local_supported_uncertain_override",
+            "confidence": max(0.9, min(confidence, 1.0)),
+        }
+    )
+    return overridden, True
 
 
 def beam_state_direct_candidate_answer(
@@ -3475,6 +3560,7 @@ def run_openai_compatible(
             beam_state_ledger_events_rows: list[dict[str, Any]] = []
             beam_state_verifier_text = ""
             beam_state_verifier_result: dict[str, Any] | None = None
+            beam_state_verifier_local_override = False
             beam_state_ledger_max_events, beam_state_ledger_max_chars = beam_state_ledger_limits(config)
             beam_state_event_count = 0
             answer_messages: list[dict[str, str]] = []
@@ -3630,6 +3716,11 @@ def run_openai_compatible(
                 usage_rows.append(verifier_response)
                 beam_state_verifier_text = str(verifier_response.get("text") or "")
                 beam_state_verifier_result = parse_beam_state_verifier(beam_state_verifier_text)
+                beam_state_verifier_result, beam_state_verifier_local_override = beam_apply_state_verifier_local_override(
+                    beam_resolved_state,
+                    beam_state_verifier_result,
+                    beam_state_ledger_events_rows,
+                )
             if config.longmemeval_structured_evidence and is_longmemeval_question(question, str(bundle.get("dataset") or "")):
                 structured_payload = add_temperature(
                     {
@@ -3915,12 +4006,21 @@ def run_openai_compatible(
                             if candidate.get("kind") == "ranked_state_memory" and str(candidate.get("answer") or "").strip():
                                 forced_ranked_index = index
                                 break
+                    trusted_typed_projection_index = beam_trusted_typed_projection_candidate_index(question, candidates)
                     if forced_ranked_index:
                         beam_answer_selector_result = {
                             "parser_status": "ranked_state_memory_direct_bypass",
                             "selected_id": f"candidate_{forced_ranked_index}",
                             "selected_index": forced_ranked_index,
                             "reason_code": "ranked_state_memory_direct_bypass",
+                            "confidence": 1.0,
+                        }
+                    elif trusted_typed_projection_index:
+                        beam_answer_selector_result = {
+                            "parser_status": "typed_projection_direct_bypass",
+                            "selected_id": f"candidate_{trusted_typed_projection_index}",
+                            "selected_index": trusted_typed_projection_index,
+                            "reason_code": "typed_projection_trusted_current_state",
                             "confidence": 1.0,
                         }
                     else:
@@ -3946,7 +4046,11 @@ def run_openai_compatible(
                             beam_answer_candidate_count,
                         )
                     beam_answer_selected_candidate_index = int(beam_answer_selector_result.get("selected_index") or 0)
-                    if beam_answer_selector_result.get("parser_status") in {"ok", "ranked_state_memory_direct_bypass"} and beam_answer_selected_candidate_index:
+                    if beam_answer_selector_result.get("parser_status") in {
+                        "ok",
+                        "ranked_state_memory_direct_bypass",
+                        "typed_projection_direct_bypass",
+                    } and beam_answer_selected_candidate_index:
                         generated_answer = candidates[beam_answer_selected_candidate_index - 1]["answer"]
                         beam_extractive_candidate_used = bool(
                             config.beam_extractive_candidate
@@ -4073,6 +4177,8 @@ def run_openai_compatible(
                     else []
                 )
                 cutoff_results[keyed]["beam_state_verifier_supporting_event_hashes"] = [str(item) for item in verifier_hashes]
+                if beam_state_verifier_local_override:
+                    cutoff_results[keyed]["beam_state_verifier_local_override"] = True
             if config.beam_direct_answer_bypass and is_beam_question(question, str(bundle.get("dataset") or "")):
                 cutoff_results[keyed]["beam_direct_answer_bypass"] = True
                 if config.beam_broad_support_bypass:
@@ -4150,6 +4256,7 @@ def run_openai_compatible(
                     "beam_state_ledger": beam_state_ledger_events_rows,
                     "beam_state_verifier_response": beam_state_verifier_text,
                     "beam_state_verifier": beam_state_verifier_result,
+                    "beam_state_verifier_local_override": beam_state_verifier_local_override,
                     "beam_direct_answer_used": beam_direct_answer_used,
                     "beam_direct_answer_bypass_reason": beam_direct_answer_bypass_reason_value,
                     "beam_answer_selector": beam_answer_selector_result,

@@ -2636,6 +2636,73 @@ def test_beam_state_verifier_corrected_answer_skips_answer_model(tmp_path):
     assert_public_report_has_no_raw_payload(result)
 
 
+def test_beam_state_verifier_local_override_validates_supported_uncertain_state():
+    module = load_module()
+    resolved_state = {
+        "parser_status": "ok",
+        "direct_answer": "one compact bullet",
+        "supporting_event_hashes": ["abc123abc123"],
+    }
+    verifier_state = {
+        "parser_status": "ok",
+        "verdict": "uncertain",
+        "corrected_direct_answer": "",
+        "supporting_event_hashes": [],
+        "reason_code": "needs_evidence",
+        "confidence": 0.42,
+    }
+
+    overridden, used = module.beam_apply_state_verifier_local_override(
+        resolved_state,
+        verifier_state,
+        [{"event_hash": "abc123abc123"}],
+    )
+
+    assert used is True
+    assert overridden["parser_status"] == "ok"
+    assert overridden["verdict"] == "valid"
+    assert overridden["supporting_event_hashes"] == ["abc123abc123"]
+    assert overridden["reason_code"] == "local_supported_uncertain_override"
+    assert overridden["confidence"] == 0.9
+
+
+def test_beam_state_verifier_local_override_rejects_unsafe_uncertain_states():
+    module = load_module()
+    valid_resolved = {
+        "parser_status": "ok",
+        "direct_answer": "one compact bullet",
+        "supporting_event_hashes": ["abc123abc123"],
+    }
+    uncertain = {
+        "parser_status": "ok",
+        "verdict": "uncertain",
+        "corrected_direct_answer": "",
+        "supporting_event_hashes": [],
+        "reason_code": "needs_evidence",
+        "confidence": 0.42,
+    }
+    unsafe_cases = [
+        ({**valid_resolved, "supporting_event_hashes": []}, uncertain, [{"event_hash": "abc123abc123"}]),
+        ({**valid_resolved, "supporting_event_hashes": ["missinghash"]}, uncertain, [{"event_hash": "abc123abc123"}]),
+        (
+            {**valid_resolved, "supporting_event_hashes": ["h1111111111", "h2222222222", "h3333333333", "h4444444444", "h5555555555"]},
+            uncertain,
+            [{"event_hash": value} for value in ["h1111111111", "h2222222222", "h3333333333", "h4444444444", "h5555555555"]],
+        ),
+        (valid_resolved, {**uncertain, "verdict": "rejected"}, [{"event_hash": "abc123abc123"}]),
+        (valid_resolved, {**uncertain, "parser_status": "invalid_json"}, [{"event_hash": "abc123abc123"}]),
+    ]
+
+    for resolved_state, verifier_state, ledger_events in unsafe_cases:
+        overridden, used = module.beam_apply_state_verifier_local_override(
+            resolved_state,
+            verifier_state,
+            ledger_events,
+        )
+        assert used is False
+        assert overridden is verifier_state
+
+
 def test_beam_disable_corrected_bypass_falls_back_to_answer_model(tmp_path):
     module = load_module()
     bundle_path = tmp_path / "beam-private.json"
@@ -4068,6 +4135,44 @@ def test_beam_typed_projection_candidate_function_ranks_matching_state_memory():
     assert module.beam_typed_projection_candidate_answer(question, [], max_memories=0) == ""
 
 
+def test_beam_trusted_typed_projection_candidate_index_accepts_clear_current_state():
+    module = load_module()
+    question = {
+        "category": "preference_following",
+        "question": "What staging interface does the user prefer?",
+    }
+    candidates = [
+        {"id": "candidate_1", "kind": "normal", "answer": "fallback answer"},
+        {"id": "candidate_2", "kind": "typed_projection", "answer": "User: I prefer the citadel staging interface."},
+    ]
+
+    assert module.beam_trusted_typed_projection_candidate_index(question, candidates) == 2
+
+
+def test_beam_trusted_typed_projection_candidate_index_rejects_ambiguous_or_unsupported_candidates():
+    module = load_module()
+    question = {
+        "category": "preference_following",
+        "question": "What staging interface does the user prefer?",
+    }
+
+    assert module.beam_trusted_typed_projection_candidate_index(
+        {"category": "information_extraction", "question": "What staging interface was mentioned?"},
+        [{"id": "candidate_1", "kind": "typed_projection", "answer": "User: I prefer the citadel staging interface."}],
+    ) == 0
+    assert module.beam_trusted_typed_projection_candidate_index(
+        question,
+        [{"id": "candidate_1", "kind": "typed_projection", "answer": "The citadel staging interface."}],
+    ) == 0
+    assert module.beam_trusted_typed_projection_candidate_index(
+        question,
+        [
+            {"id": "candidate_1", "kind": "alternate", "answer": "User: I prefer the harbor staging interface."},
+            {"id": "candidate_2", "kind": "typed_projection", "answer": "User: I prefer the citadel staging interface."},
+        ],
+    ) == 0
+
+
 def test_beam_typed_projection_candidate_adds_deterministic_answer_without_extra_answer_call(tmp_path):
     module = load_module()
     bundle_path = tmp_path / "beam-private.json"
@@ -4112,9 +4217,7 @@ def test_beam_typed_projection_candidate_adds_deterministic_answer_without_extra
         system_prompt = payload["messages"][0]["content"].lower()
         user_prompt = payload["messages"][1]["content"]
         if "select the best beam candidate answer" in system_prompt:
-            assert "Candidate candidate_3:" in user_prompt
-            assert "typed_projection" in user_prompt
-            return {"text": '{"selected_id":"candidate_3","reason_code":"typed_projection_supported","confidence":0.99}', "usage": {"prompt_tokens": 15, "completion_tokens": 4}}
+            raise AssertionError("trusted typed projection should bypass the selector")
         if "resolve beam current state" in system_prompt:
             return {
                 "text": json.dumps(
@@ -4170,11 +4273,12 @@ def test_beam_typed_projection_candidate_adds_deterministic_answer_without_extra
     cutoff = result["questions"][0]["cutoff_results"]["20"]
     rendered = json.dumps(result)
 
-    assert len(calls) == 6
+    assert len(calls) == 5
     assert cutoff["beam_typed_projection_candidate"] is True
     assert cutoff["beam_typed_projection_candidate_used"] is True
     assert cutoff["beam_answer_candidate_count"] == 3
     assert cutoff["beam_answer_selected_candidate_index"] == 3
+    assert cutoff["beam_answer_selector_status"] == "typed_projection_direct_bypass"
     assert cutoff["generated_answer_hash"] == module.stable_hash("User: I prefer the citadel staging interface.")
     assert "citadel staging interface" not in rendered
     assert "harbor interface" not in rendered
@@ -4282,10 +4386,10 @@ def test_beam_typed_projection_candidate_does_not_add_provider_calls_against_fla
     off_cutoff = off_result["questions"][0]["cutoff_results"]["20"]
     on_cutoff = on_result["questions"][0]["cutoff_results"]["20"]
 
-    assert len(on_calls) == len(off_calls)
+    assert len(on_calls) <= len(off_calls)
     assert on_cutoff["beam_answer_candidate_count"] == off_cutoff["beam_answer_candidate_count"] + 1
     assert on_cutoff["beam_typed_projection_candidate"] is True
-    assert on_cutoff["beam_typed_projection_candidate_used"] is False
+    assert on_cutoff["beam_typed_projection_candidate_used"] is True
     assert_public_report_has_no_raw_payload(on_result)
 
 
@@ -4354,7 +4458,7 @@ def test_beam_typed_projection_candidate_reports_not_used_when_selector_prefers_
         if "strict benchmark judge" in system_prompt:
             return {"text": '{"correct": true, "score": 1.0}', "usage": {"prompt_tokens": 11, "completion_tokens": 3}}
         if "BEAM resolved state:" in user_prompt:
-            return {"text": "stateful fallback answer", "usage": {"prompt_tokens": 9, "completion_tokens": 4}}
+            return {"text": "User: I prefer the harbor staging interface.", "usage": {"prompt_tokens": 9, "completion_tokens": 4}}
         return {"text": "stateless fallback answer", "usage": {"prompt_tokens": 9, "completion_tokens": 4}}
 
     result = module.run_openai_compatible(
@@ -4394,8 +4498,8 @@ def test_beam_typed_projection_candidate_reports_not_used_when_selector_prefers_
         {
             "id": "candidate_2",
             "kind": "alternate",
-            "answer_hash": module.stable_hash("stateful fallback answer"),
-            "answer_chars": len("stateful fallback answer"),
+            "answer_hash": module.stable_hash("User: I prefer the harbor staging interface."),
+            "answer_chars": len("User: I prefer the harbor staging interface."),
         },
         {
             "id": "candidate_3",
@@ -4404,7 +4508,7 @@ def test_beam_typed_projection_candidate_reports_not_used_when_selector_prefers_
             "answer_chars": len("User: I prefer the citadel staging interface."),
         },
     ]
-    assert cutoff["generated_answer_hash"] == module.stable_hash("stateful fallback answer")
+    assert cutoff["generated_answer_hash"] == module.stable_hash("User: I prefer the harbor staging interface.")
     assert_public_report_has_no_raw_payload(result)
 
 
@@ -4471,9 +4575,7 @@ def test_beam_typed_projection_candidate_can_be_selected_after_all_other_candida
         if "answer beam current-state from ranked state memory rows" in system_prompt:
             return {"text": "ranked state memory answer", "usage": {"prompt_tokens": 16, "completion_tokens": 5}}
         if "select the best beam candidate answer" in system_prompt:
-            assert "Candidate candidate_6:" in user_prompt
-            assert "typed_projection" in user_prompt
-            return {"text": '{"selected_id":"candidate_6","reason_code":"typed_projection_supported","confidence":0.96}', "usage": {"prompt_tokens": 15, "completion_tokens": 4}}
+            raise AssertionError("trusted typed projection should bypass the selector")
         if "strict benchmark judge" in system_prompt:
             assert "citadel staging interface" in user_prompt
             return {"text": '{"correct": true, "score": 1.0}', "usage": {"prompt_tokens": 11, "completion_tokens": 3}}
@@ -4513,6 +4615,7 @@ def test_beam_typed_projection_candidate_can_be_selected_after_all_other_candida
     assert cutoff["beam_typed_projection_candidate_used"] is True
     assert cutoff["beam_answer_candidate_count"] == 6
     assert cutoff["beam_answer_selected_candidate_index"] == 6
+    assert cutoff["beam_answer_selector_status"] == "typed_projection_direct_bypass"
     assert cutoff["generated_answer_hash"] == module.stable_hash("User: You should use the citadel staging interface.")
     assert "citadel staging interface" not in rendered
     assert "private reducer direct answer" not in rendered

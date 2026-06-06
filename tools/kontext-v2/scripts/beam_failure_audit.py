@@ -68,6 +68,13 @@ def stable_hash(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
 
 
+def safe_int(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _env_bool(name: str) -> bool:
     return str(os.environ.get(name, "")).strip().lower() in {"1", "true", "yes", "on"}
 
@@ -199,6 +206,32 @@ def term_coverage(
     }
 
 
+def safe_candidate_summaries(result: dict[str, Any]) -> list[dict[str, Any]]:
+    rows = result.get("beam_answer_candidate_summaries")
+    if not isinstance(rows, list):
+        return []
+    summaries: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        summaries.append(
+            {
+                "id": str(row.get("id") or "")[:40],
+                "kind": str(row.get("kind") or "unknown")[:40],
+                "answer_hash": str(row.get("answer_hash") or "")[:80],
+                "answer_chars": safe_int(row.get("answer_chars")),
+            }
+        )
+    return summaries
+
+
+def selected_candidate_kind(result: dict[str, Any], summaries: list[dict[str, Any]]) -> str:
+    selected_index = safe_int(result.get("beam_answer_selected_candidate_index"))
+    if selected_index < 1 or selected_index > len(summaries):
+        return "unknown"
+    return str(summaries[selected_index - 1].get("kind") or "unknown")
+
+
 def class_for_failure(
     question: dict[str, Any],
     bundle_question: dict[str, Any] | None,
@@ -222,6 +255,11 @@ def class_for_failure(
         if result.get("beam_retrieved_excerpt_direct_bypass_used"):
             return "beam_retrieved_excerpt_direct_bypass_wrong"
         return "beam_retrieved_excerpt_direct_bypass_not_used"
+
+    if result.get("beam_typed_projection_candidate") and int(result.get("beam_answer_candidate_count") or 0) > 0:
+        if result.get("beam_typed_projection_candidate_used"):
+            return "beam_typed_projection_candidate_wrong"
+        return "beam_typed_projection_candidate_not_selected"
 
     if result.get("beam_ranked_state_memory_candidate") and int(result.get("beam_answer_candidate_count") or 0) > 0:
         if result.get("beam_ranked_state_memory_candidate_used"):
@@ -382,6 +420,8 @@ def build_audit_report(
         "beam_extractive_candidate_not_selected": 0,
         "beam_ranked_state_memory_candidate_wrong": 0,
         "beam_ranked_state_memory_candidate_not_selected": 0,
+        "beam_typed_projection_candidate_wrong": 0,
+        "beam_typed_projection_candidate_not_selected": 0,
         "beam_retrieved_excerpt_direct_bypass_wrong": 0,
         "beam_retrieved_excerpt_direct_bypass_not_used": 0,
         "beam_state_direct_candidate_wrong": 0,
@@ -439,6 +479,12 @@ def build_audit_report(
                 "judge_count": judge_count,
                 "judge_pass_count": judge_pass_count,
                 "term_coverage": coverage,
+                "selected_candidate_index": safe_int(result.get("beam_answer_selected_candidate_index")),
+                "selected_candidate_kind": selected_candidate_kind(result, safe_candidate_summaries(result)),
+                "candidate_summaries": safe_candidate_summaries(result),
+                "generated_answer_hash": str(result.get("generated_answer_hash") or "")[:80],
+                "beam_state_verifier_status": str(result.get("beam_state_verifier_status") or "")[:80],
+                "beam_direct_answer_bypass_reason": str(result.get("beam_direct_answer_bypass_reason") or "")[:120],
             }
         )
 
