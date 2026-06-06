@@ -29,6 +29,7 @@ DEFAULT_JUDGE_OUTPUT_TOKENS = 120
 BEAM_STATE_JSON_OUTPUT_TOKENS = 800
 BEAM_VERIFIER_JSON_OUTPUT_TOKENS = 400
 BEAM_SELECTOR_JSON_OUTPUT_TOKENS = 180
+BEAM_ATOMIZER_JSON_OUTPUT_TOKENS = 700
 DEFAULT_OPENAI_COMPATIBLE_BASE_URL = "https://api.openai.com/v1/chat/completions"
 SECRET_VALUE_PATTERNS = [
     re.compile(r"sk-[A-Za-z0-9_-]{8,}"),
@@ -3953,12 +3954,15 @@ def run_openai_compatible(
                 usage_rows.append(structured_response)
                 structured_evidence = str(structured_response.get("text") or "")
             if config.beam_memory_atomizer and is_beam:
-                atomizer_payload = add_temperature(
-                    {
-                        "model": config.answerer_model,
-                        "messages": build_beam_memory_atomizer_messages(question, memories),
-                    },
-                    config,
+                atomizer_payload = add_json_response_format(
+                    add_temperature(
+                        {
+                            "model": config.answerer_model,
+                            "messages": build_beam_memory_atomizer_messages(question, memories),
+                        },
+                        config,
+                        max_completion_tokens=BEAM_ATOMIZER_JSON_OUTPUT_TOKENS,
+                    )
                 )
                 try:
                     atomizer_response = http_post(atomizer_payload, config.api_key, config.base_url)

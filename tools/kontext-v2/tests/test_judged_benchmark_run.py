@@ -2423,6 +2423,13 @@ def test_beam_json_model_tasks_request_json_response_format():
                 "text": '{"verdict":"uncertain","corrected_direct_answer":"","supporting_event_hashes":[],"reason_code":"test","confidence":0.0}',
                 "usage": {"prompt_tokens": 8, "completion_tokens": 3},
             }
+        if "atomize beam retrieved memories" in system_prompt:
+            json_task_formats["atomizer"] = payload.get("response_format")
+            json_task_limits["atomizer"] = payload.get("max_completion_tokens")
+            return {
+                "text": '{"facts":[{"fact":"citadel interface preference","status":"active","support_hashes":[]}],"current_answer_hint":"citadel interface","uncertainty":""}',
+                "usage": {"prompt_tokens": 8, "completion_tokens": 3},
+            }
         if "select the best beam candidate answer" in system_prompt:
             json_task_formats["selector"] = payload.get("response_format")
             json_task_limits["selector"] = payload.get("max_completion_tokens")
@@ -2451,6 +2458,7 @@ def test_beam_json_model_tasks_request_json_response_format():
             beam_direct_answer_bypass=True,
             beam_state_verifier=True,
             beam_answer_candidate_selector=True,
+            beam_memory_atomizer=True,
         ),
         cutoffs="20",
         http_post=fake_post,
@@ -2459,12 +2467,14 @@ def test_beam_json_model_tasks_request_json_response_format():
     assert json_task_formats == {
         "state_reducer": {"type": "json_object"},
         "state_verifier": {"type": "json_object"},
+        "atomizer": {"type": "json_object"},
         "selector": {"type": "json_object"},
         "judge": {"type": "json_object"},
     }
     assert json_task_limits == {
         "state_reducer": module.BEAM_STATE_JSON_OUTPUT_TOKENS,
         "state_verifier": module.BEAM_VERIFIER_JSON_OUTPUT_TOKENS,
+        "atomizer": module.BEAM_ATOMIZER_JSON_OUTPUT_TOKENS,
         "selector": module.BEAM_SELECTOR_JSON_OUTPUT_TOKENS,
         "judge": module.DEFAULT_JUDGE_OUTPUT_TOKENS,
     }
