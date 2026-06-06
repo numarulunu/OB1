@@ -2344,6 +2344,33 @@ def test_parse_beam_state_verifier_accepts_corrections_and_invalid_json():
     assert invalid["corrected_direct_answer"] == ""
 
 
+def test_beam_json_parsers_accept_wrapped_json_objects():
+    module = load_module()
+
+    resolved = module.parse_beam_resolved_state(
+        """
+        The resolved state is:
+        ```json
+        {"active_state":"invoice replies are compact","replaced_state":"","direct_answer":"one compact bullet","constraints":[],"uncertainty":"","supporting_event_hashes":["abc123abc123"]}
+        ```
+        """
+    )
+    verifier = module.parse_beam_state_verifier(
+        'Verifier output: {"verdict":"valid","corrected_direct_answer":"","supporting_event_hashes":["abc123abc123"],"reason_code":"supported","confidence":0.91}'
+    )
+    selector = module.parse_beam_answer_selector(
+        '```json\n{"selected_id":"candidate_2","reason_code":"best_supported","confidence":0.82}\n```',
+        3,
+    )
+
+    assert resolved["parser_status"] == "ok"
+    assert resolved["direct_answer"] == "one compact bullet"
+    assert verifier["parser_status"] == "ok"
+    assert verifier["verdict"] == "valid"
+    assert selector["parser_status"] == "ok"
+    assert selector["selected_index"] == 2
+
+
 def test_beam_verified_direct_answer_requires_support_overlap():
     module = load_module()
     resolved = {
@@ -4357,6 +4384,26 @@ def test_beam_typed_projection_candidate_reports_not_used_when_selector_prefers_
     assert cutoff["beam_typed_projection_candidate_used"] is False
     assert cutoff["beam_answer_candidate_count"] == 3
     assert cutoff["beam_answer_selected_candidate_index"] == 2
+    assert cutoff["beam_answer_candidate_summaries"] == [
+        {
+            "id": "candidate_1",
+            "kind": "normal",
+            "answer_hash": module.stable_hash("stateless fallback answer"),
+            "answer_chars": len("stateless fallback answer"),
+        },
+        {
+            "id": "candidate_2",
+            "kind": "alternate",
+            "answer_hash": module.stable_hash("stateful fallback answer"),
+            "answer_chars": len("stateful fallback answer"),
+        },
+        {
+            "id": "candidate_3",
+            "kind": "typed_projection",
+            "answer_hash": module.stable_hash("User: I prefer the citadel staging interface."),
+            "answer_chars": len("User: I prefer the citadel staging interface."),
+        },
+    ]
     assert cutoff["generated_answer_hash"] == module.stable_hash("stateful fallback answer")
     assert_public_report_has_no_raw_payload(result)
 

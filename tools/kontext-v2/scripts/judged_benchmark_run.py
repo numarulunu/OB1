@@ -634,6 +634,50 @@ def bounded_text(value: str, max_chars: int) -> str:
     return text[: max(max_chars - 3, 0)].rstrip() + "..."
 
 
+def load_json_object_from_model_text(text: str) -> dict[str, Any] | None:
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+
+    candidates = [raw]
+    fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, flags=re.IGNORECASE | re.DOTALL)
+    if fence:
+        candidates.insert(0, fence.group(1).strip())
+
+    start = raw.find("{")
+    if start >= 0:
+        depth = 0
+        in_string = False
+        escaped = False
+        for offset, char in enumerate(raw[start:], start=start):
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    in_string = False
+                continue
+            if char == '"':
+                in_string = True
+            elif char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    candidates.append(raw[start : offset + 1])
+                    break
+
+    for candidate in candidates:
+        try:
+            payload = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return payload
+    return None
+
+
 def beam_state_ledger_limits(config: ExternalRunConfig) -> tuple[int, int]:
     max_events = BEAM_STATE_LEDGER_DEFAULT_MAX_EVENTS
     if config.answer_max_memories is not None:
@@ -1183,9 +1227,8 @@ def parse_beam_resolved_state(text: str) -> dict[str, Any]:
             "uncertainty": "state reducer returned no text",
             "supporting_event_hashes": [],
         }
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
+    payload = load_json_object_from_model_text(raw)
+    if payload is None:
         return {
             "parser_status": "invalid_json",
             "active_state": "",
@@ -1195,17 +1238,6 @@ def parse_beam_resolved_state(text: str) -> dict[str, Any]:
             "uncertainty": "state reducer returned invalid JSON",
             "supporting_event_hashes": [],
         }
-    if not isinstance(payload, dict):
-        return {
-            "parser_status": "invalid_json",
-            "active_state": "",
-            "replaced_state": "",
-            "direct_answer": "",
-            "constraints": [],
-            "uncertainty": "state reducer JSON was not an object",
-            "supporting_event_hashes": [],
-        }
-
     def text_value(key: str) -> str:
         return str(payload.get(key) or "").strip()[:1200]
 
@@ -1411,17 +1443,8 @@ def build_beam_memory_atomizer_messages(
 
 
 def parse_beam_answer_selector(text: str, candidate_count: int) -> dict[str, Any]:
-    try:
-        payload = json.loads(text)
-    except Exception:
-        return {
-            "parser_status": "invalid_json",
-            "selected_id": "",
-            "selected_index": 0,
-            "reason_code": "",
-            "confidence": 0.0,
-        }
-    if not isinstance(payload, dict):
+    payload = load_json_object_from_model_text(text)
+    if payload is None:
         return {
             "parser_status": "invalid_json",
             "selected_id": "",
@@ -1455,6 +1478,21 @@ def parse_beam_answer_selector(text: str, candidate_count: int) -> dict[str, Any
     }
 
 
+def beam_answer_candidate_public_summaries(candidates: list[dict[str, str]]) -> list[dict[str, Any]]:
+    summaries: list[dict[str, Any]] = []
+    for index, candidate in enumerate(candidates, start=1):
+        answer = str(candidate.get("answer") or "")
+        summaries.append(
+            {
+                "id": str(candidate.get("id") or f"candidate_{index}")[:40],
+                "kind": str(candidate.get("kind") or "unknown")[:40],
+                "answer_hash": stable_hash(answer),
+                "answer_chars": len(answer),
+            }
+        )
+    return summaries
+
+
 def parse_beam_state_verifier(text: str) -> dict[str, Any]:
     raw = str(text or "").strip()
     if not raw:
@@ -1466,18 +1504,8 @@ def parse_beam_state_verifier(text: str) -> dict[str, Any]:
             "reason_code": "empty",
             "confidence": 0.0,
         }
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
-        return {
-            "parser_status": "invalid_json",
-            "verdict": "uncertain",
-            "corrected_direct_answer": "",
-            "supporting_event_hashes": [],
-            "reason_code": "invalid_json",
-            "confidence": 0.0,
-        }
-    if not isinstance(payload, dict):
+    payload = load_json_object_from_model_text(raw)
+    if payload is None:
         return {
             "parser_status": "invalid_json",
             "verdict": "uncertain",
@@ -3071,7 +3099,10 @@ def default_openai_compatible_post(
         except urllib.error.HTTPError as exc:
             if exc.code != 429 or attempt >= max(retries, 0):
                 raise
-            exc.read()
+            try:
+                exc.read()
+            except Exception:
+                pass
             retry_after = None
             try:
                 retry_after = exc.headers.get("Retry-After")
@@ -3455,6 +3486,7 @@ def run_openai_compatible(
             beam_state_used_in_answer_prompt = False
             beam_answer_selector_result: dict[str, Any] | None = None
             beam_answer_candidate_count = 0
+            beam_answer_candidate_summaries: list[dict[str, Any]] = []
             beam_answer_selected_candidate_index = 0
             beam_extractive_candidate_used = False
             beam_state_direct_candidate_used = False
@@ -3876,6 +3908,7 @@ def run_openai_compatible(
                                 }
                             )
                     beam_answer_candidate_count = len(candidates)
+                    beam_answer_candidate_summaries = beam_answer_candidate_public_summaries(candidates)
                     forced_ranked_index = 0
                     if config.beam_ranked_state_memory_direct_bypass and config.beam_ranked_state_memory_candidate:
                         for index, candidate in enumerate(candidates, start=1):
@@ -4062,6 +4095,8 @@ def run_openai_compatible(
                 cutoff_results[keyed]["beam_answer_candidate_selector"] = True
                 cutoff_results[keyed]["beam_answer_candidate_count"] = beam_answer_candidate_count
                 cutoff_results[keyed]["beam_answer_selected_candidate_index"] = beam_answer_selected_candidate_index
+                if beam_answer_candidate_summaries:
+                    cutoff_results[keyed]["beam_answer_candidate_summaries"] = beam_answer_candidate_summaries
                 selector_status = "not_used"
                 if isinstance(beam_answer_selector_result, dict):
                     selector_status = str(beam_answer_selector_result.get("parser_status") or "missing")
