@@ -2395,12 +2395,14 @@ def test_beam_json_model_tasks_request_json_response_format():
         ],
     }
     json_task_formats = {}
+    json_task_limits = {}
     answer_formats = []
 
     def fake_post(payload, _api_key, _base_url):
         system_prompt = payload["messages"][0]["content"].lower()
         if "resolve beam current state" in system_prompt:
             json_task_formats["state_reducer"] = payload.get("response_format")
+            json_task_limits["state_reducer"] = payload.get("max_completion_tokens")
             return {
                 "text": json.dumps(
                     {
@@ -2416,18 +2418,21 @@ def test_beam_json_model_tasks_request_json_response_format():
             }
         if "verify beam resolved state" in system_prompt:
             json_task_formats["state_verifier"] = payload.get("response_format")
+            json_task_limits["state_verifier"] = payload.get("max_completion_tokens")
             return {
                 "text": '{"verdict":"uncertain","corrected_direct_answer":"","supporting_event_hashes":[],"reason_code":"test","confidence":0.0}',
                 "usage": {"prompt_tokens": 8, "completion_tokens": 3},
             }
         if "select the best beam candidate answer" in system_prompt:
             json_task_formats["selector"] = payload.get("response_format")
+            json_task_limits["selector"] = payload.get("max_completion_tokens")
             return {
                 "text": '{"selected_id":"candidate_2","reason_code":"test","confidence":0.7}',
                 "usage": {"prompt_tokens": 7, "completion_tokens": 2},
             }
         if "strict benchmark judge" in system_prompt:
             json_task_formats["judge"] = payload.get("response_format")
+            json_task_limits["judge"] = payload.get("max_completion_tokens")
             return {"text": '{"correct": true, "score": 1.0}', "usage": {"prompt_tokens": 6, "completion_tokens": 2}}
         answer_formats.append(payload.get("response_format"))
         return {"text": "Use the citadel interface.", "usage": {"prompt_tokens": 5, "completion_tokens": 2}}
@@ -2456,6 +2461,12 @@ def test_beam_json_model_tasks_request_json_response_format():
         "state_verifier": {"type": "json_object"},
         "selector": {"type": "json_object"},
         "judge": {"type": "json_object"},
+    }
+    assert json_task_limits == {
+        "state_reducer": module.BEAM_STATE_JSON_OUTPUT_TOKENS,
+        "state_verifier": module.BEAM_VERIFIER_JSON_OUTPUT_TOKENS,
+        "selector": module.BEAM_SELECTOR_JSON_OUTPUT_TOKENS,
+        "judge": module.DEFAULT_JUDGE_OUTPUT_TOKENS,
     }
     assert answer_formats == [None, None]
 
@@ -3172,6 +3183,85 @@ def test_beam_information_extraction_candidate_direct_bypasses_selector(tmp_path
     assert cutoff["generated_answer_hash"] == module.stable_hash("Assistant: The staging token was citadel-42.")
     assert "citadel-42" not in rendered
     assert "wrong token" not in rendered
+    assert_public_report_has_no_raw_payload(result)
+
+
+def test_beam_information_extraction_extractive_candidate_can_be_selected_for_broad_question(tmp_path):
+    module = load_module()
+    bundle_path = tmp_path / "beam-private.json"
+    bundle_path.write_text(
+        json.dumps(
+            {
+                "dataset": "beam_1M",
+                "run_id": "private-beam-slice",
+                "mode": "private-judged-input-bundle",
+                "runs_model_calls": False,
+                "contains_raw_benchmark_text": True,
+                "contains_live_user_memory": False,
+                "top_k_values": [20],
+                "questions": [
+                    {
+                        "question_id": "beam-q1",
+                        "category": "information_extraction",
+                        "question": "Summarize the staging token details from the conversation.",
+                        "ground_truth_answer": "citadel-42 and invoice sync",
+                        "retrieved_memories_by_top_k": {
+                            "20": [
+                                {
+                                    "memory": "assistant: The staging token was citadel-42 for invoice sync.",
+                                    "metadata": {"source_ids": ["turn-1"]},
+                                }
+                            ]
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_post(payload, _api_key, _base_url):
+        system_prompt = payload["messages"][0]["content"].lower()
+        user_prompt = payload["messages"][1]["content"]
+        if "extract a direct beam answer" in system_prompt:
+            assert "BEAM evidence windows" in user_prompt
+            return {"text": "Assistant: citadel-42 for invoice sync.", "usage": {"prompt_tokens": 13, "completion_tokens": 4}}
+        if "select the best beam candidate answer" in system_prompt:
+            assert "Kind: extractive" in user_prompt
+            return {
+                "text": '{"selected_id":"candidate_2","reason_code":"extractive_direct","confidence":0.91}',
+                "usage": {"prompt_tokens": 11, "completion_tokens": 3},
+            }
+        if "strict benchmark judge" in system_prompt:
+            assert "citadel-42 for invoice sync" in user_prompt
+            return {"text": '{"correct": true, "score": 1.0}', "usage": {"prompt_tokens": 9, "completion_tokens": 3}}
+        return {"text": "Assistant: verbose unrelated staging notes.", "usage": {"prompt_tokens": 7, "completion_tokens": 2}}
+
+    result = module.run_openai_compatible(
+        module.load_bundle(bundle_path),
+        module.ExternalRunConfig(
+            approved=True,
+            max_cost_usd=1,
+            answerer_model="answerer",
+            judge_model="judge",
+            api_key="test-key",
+            base_url="https://example.test/v1/chat/completions",
+            prices=module.PriceConfig(1, 1, 1, 1),
+            beam_answer_candidate_selector=True,
+            beam_extractive_candidate=True,
+        ),
+        cutoffs="20",
+        http_post=fake_post,
+    )
+    cutoff = result["questions"][0]["cutoff_results"]["20"]
+    rendered = json.dumps(result)
+
+    assert cutoff["beam_answer_candidate_count"] == 2
+    assert cutoff["beam_answer_selected_candidate_index"] == 2
+    assert cutoff["beam_answer_selected_candidate_kind"] == "extractive"
+    assert cutoff["beam_answer_selector_status"] == "ok"
+    assert cutoff["beam_extractive_candidate_used"] is True
+    assert "citadel-42" not in rendered
     assert_public_report_has_no_raw_payload(result)
 
 

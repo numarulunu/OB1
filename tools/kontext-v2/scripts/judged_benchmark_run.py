@@ -26,6 +26,9 @@ DEFAULT_ANSWER_INPUT_TOKENS = 4_000
 DEFAULT_ANSWER_OUTPUT_TOKENS = 300
 DEFAULT_JUDGE_INPUT_TOKENS = 1_500
 DEFAULT_JUDGE_OUTPUT_TOKENS = 120
+BEAM_STATE_JSON_OUTPUT_TOKENS = 800
+BEAM_VERIFIER_JSON_OUTPUT_TOKENS = 400
+BEAM_SELECTOR_JSON_OUTPUT_TOKENS = 180
 DEFAULT_OPENAI_COMPATIBLE_BASE_URL = "https://api.openai.com/v1/chat/completions"
 SECRET_VALUE_PATTERNS = [
     re.compile(r"sk-[A-Za-z0-9_-]{8,}"),
@@ -3883,6 +3886,7 @@ def run_openai_compatible(
                             "messages": state_messages,
                         },
                         config,
+                        max_completion_tokens=BEAM_STATE_JSON_OUTPUT_TOKENS,
                     )
                 )
                 try:
@@ -3912,6 +3916,7 @@ def run_openai_compatible(
                             ),
                         },
                         config,
+                        max_completion_tokens=BEAM_VERIFIER_JSON_OUTPUT_TOKENS,
                     )
                 )
                 try:
@@ -4136,7 +4141,10 @@ def run_openai_compatible(
                             return provider_failure(exc, question, top_k)
                         usage_rows.append(alternate_response)
                         candidates.append({"id": "candidate_2", "kind": "alternate", "answer": str(alternate_response.get("text") or "")})
-                    if config.beam_extractive_candidate and beam_current_state_path:
+                    if config.beam_extractive_candidate and (
+                        beam_current_state_path
+                        or str(question.get("category") or "").lower() == "information_extraction"
+                    ):
                         extractive_payload = add_temperature(
                             {
                                 "model": config.answerer_model,
@@ -4269,6 +4277,7 @@ def run_openai_compatible(
                                         ),
                                     },
                                     config,
+                                    max_completion_tokens=BEAM_SELECTOR_JSON_OUTPUT_TOKENS,
                                 )
                             )
                             try:
