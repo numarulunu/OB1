@@ -1931,7 +1931,7 @@ def beam_trusted_typed_projection_candidate_index(question: dict[str, Any], cand
         return 0
     if str(question.get("category") or "").lower() != "preference_following":
         return 0
-    scored_typed: list[tuple[int, int, str]] = []
+    scored_typed: list[tuple[int, int, str, int]] = []
     for index, candidate in enumerate(candidates, start=1):
         if str(candidate.get("kind") or "") != "typed_projection":
             continue
@@ -1941,11 +1941,11 @@ def beam_trusted_typed_projection_candidate_index(question: dict[str, Any], cand
         marker, overlap = beam_candidate_marker_overlap(question, answer)
         if not marker or overlap < 1:
             continue
-        scored_typed.append((overlap, index, normalized_beam_candidate_answer(answer)))
+        scored_typed.append((overlap, index, normalized_beam_candidate_answer(answer), len(answer)))
     if not scored_typed:
         return 0
     scored_typed.sort(key=lambda item: (-item[0], item[1]))
-    typed_overlap, typed_index, typed_answer = scored_typed[0]
+    typed_overlap, typed_index, typed_answer, typed_chars = scored_typed[0]
     for index, candidate in enumerate(candidates, start=1):
         if index == typed_index:
             continue
@@ -1953,7 +1953,8 @@ def beam_trusted_typed_projection_candidate_index(question: dict[str, Any], cand
         if not answer or normalized_beam_candidate_answer(answer) == typed_answer:
             continue
         marker, overlap = beam_candidate_marker_overlap(question, answer)
-        if marker and overlap >= typed_overlap:
+        comparable_chars = max(typed_chars * 2, typed_chars + 160)
+        if marker and overlap >= typed_overlap and len(answer) <= comparable_chars:
             return 0
     return typed_index
 
@@ -2856,7 +2857,7 @@ def build_answer_messages(
     beam_question = beam_evidence_windows and is_beam
     beam_contract_question = beam_answer_contract and is_beam and not beam_category_synthesis
     beam_structured_question = bool(beam_structured_evidence and beam_structured_evidence.strip()) and is_beam
-    beam_direct_rules_question = is_beam
+    beam_direct_rules_question = beam_category_synthesis and is_beam
     beam_state_question = isinstance(beam_state_reducer, dict) and is_beam
     longmemeval_question = longmemeval_evidence_windows and is_longmemeval
     longmemeval_structured_question = (
@@ -4172,6 +4173,12 @@ def run_openai_compatible(
                             if candidate.get("kind") == "ranked_state_memory" and str(candidate.get("answer") or "").strip():
                                 forced_ranked_index = index
                                 break
+                    forced_information_index = 0
+                    if str(question.get("category") or "").lower() == "information_extraction":
+                        for index, candidate in enumerate(candidates, start=1):
+                            if candidate.get("kind") == "information_extraction" and str(candidate.get("answer") or "").strip():
+                                forced_information_index = index
+                                break
                     trusted_typed_projection_index = beam_trusted_typed_projection_candidate_index(question, candidates)
                     if forced_ranked_index:
                         beam_answer_selector_result = {
@@ -4179,6 +4186,14 @@ def run_openai_compatible(
                             "selected_id": f"candidate_{forced_ranked_index}",
                             "selected_index": forced_ranked_index,
                             "reason_code": "ranked_state_memory_direct_bypass",
+                            "confidence": 1.0,
+                        }
+                    elif forced_information_index:
+                        beam_answer_selector_result = {
+                            "parser_status": "information_extraction_direct_bypass",
+                            "selected_id": f"candidate_{forced_information_index}",
+                            "selected_index": forced_information_index,
+                            "reason_code": "information_extraction_direct_bypass",
                             "confidence": 1.0,
                         }
                     elif trusted_typed_projection_index:
@@ -4219,6 +4234,7 @@ def run_openai_compatible(
                     )
                     if isinstance(beam_answer_selector_result, dict) and beam_answer_selector_result.get("parser_status") in {
                         "ok",
+                        "information_extraction_direct_bypass",
                         "ranked_state_memory_direct_bypass",
                         "typed_projection_direct_bypass",
                     } and beam_answer_selected_candidate_index:

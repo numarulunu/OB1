@@ -2966,21 +2966,6 @@ def test_beam_information_extraction_skips_current_state_path(tmp_path):
     assert_public_report_has_no_raw_payload(result)
 
 
-def test_beam_information_extraction_answer_prompt_includes_direct_fact_guidance():
-    module = load_module()
-
-    messages = module.build_answer_messages(
-        {"category": "information_extraction", "question": "Which staging token was mentioned?"},
-        [{"memory": "assistant: The staging token was citadel-42."}],
-        bundle_dataset="beam_1M",
-        beam_structured_evidence="candidate_facts: staging token citadel-42",
-    )
-    user_prompt = messages[1]["content"]
-
-    assert "Answer the exact requested fact or value." in user_prompt
-    assert "Return one direct answer, not sectioned notes." in user_prompt
-
-
 def test_beam_information_extraction_candidate_requires_singular_fact_question():
     module = load_module()
 
@@ -2996,7 +2981,7 @@ def test_beam_information_extraction_candidate_requires_singular_fact_question()
     ) == ""
 
 
-def test_beam_information_extraction_candidate_selector_can_choose_deterministic_candidate(tmp_path):
+def test_beam_information_extraction_candidate_direct_bypasses_selector(tmp_path):
     module = load_module()
     bundle_path = tmp_path / "beam-private.json"
     bundle_path.write_text(
@@ -3036,12 +3021,7 @@ def test_beam_information_extraction_candidate_selector_can_choose_deterministic
         system_prompt = payload["messages"][0]["content"].lower()
         user_prompt = payload["messages"][1]["content"]
         if "select the best beam candidate answer" in system_prompt:
-            assert "Candidate candidate_2:" in user_prompt
-            assert "information_extraction" in user_prompt
-            return {
-                "text": '{"selected_id":"candidate_2","reason_code":"deterministic_evidence","confidence":0.91}',
-                "usage": {"prompt_tokens": 13, "completion_tokens": 4},
-            }
+            raise AssertionError("singular information extraction candidate should bypass selector")
         if "strict benchmark judge" in system_prompt:
             assert "citadel-42" in user_prompt
             return {"text": '{"correct": true, "score": 1.0}', "usage": {"prompt_tokens": 11, "completion_tokens": 3}}
@@ -3065,11 +3045,11 @@ def test_beam_information_extraction_candidate_selector_can_choose_deterministic
     cutoff = result["questions"][0]["cutoff_results"]["20"]
     rendered = json.dumps(result)
 
-    assert len(calls) == 3
+    assert len(calls) == 2
     assert cutoff["beam_answer_candidate_selector"] is True
     assert cutoff["beam_answer_candidate_count"] == 2
     assert cutoff["beam_answer_selected_candidate_index"] == 2
-    assert cutoff["beam_answer_selector_status"] == "ok"
+    assert cutoff["beam_answer_selector_status"] == "information_extraction_direct_bypass"
     assert cutoff["generated_answer_hash"] == module.stable_hash("Assistant: The staging token was citadel-42.")
     assert "citadel-42" not in rendered
     assert "wrong token" not in rendered
@@ -4323,6 +4303,28 @@ def test_beam_trusted_typed_projection_candidate_index_rejects_strong_overlap_wi
     ]
 
     assert module.beam_trusted_typed_projection_candidate_index(question, candidates) == 0
+
+
+def test_beam_trusted_typed_projection_candidate_index_ignores_verbose_competing_candidates():
+    module = load_module()
+    question = {
+        "category": "preference_following",
+        "question": "What staging interface does the user prefer for invoice replies?",
+    }
+    verbose_competing_answer = (
+        "User preference: invoice replies use the harbor staging interface. "
+        + ("Extra invoice staging interface notes. " * 40)
+    )
+    candidates = [
+        {"id": "candidate_1", "kind": "normal", "answer": verbose_competing_answer},
+        {
+            "id": "candidate_2",
+            "kind": "typed_projection",
+            "answer": "User: I prefer the citadel staging interface for invoice replies.",
+        },
+    ]
+
+    assert module.beam_trusted_typed_projection_candidate_index(question, candidates) == 2
 
 
 def test_beam_trusted_typed_projection_candidate_index_rejects_ambiguous_or_unsupported_candidates():
