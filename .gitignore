@@ -9,6 +9,7 @@ supabase/
 .claude.json
 
 # Python caches
+.venv/
 __pycache__/
 *.pyc
 

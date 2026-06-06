@@ -617,6 +617,7 @@ UNTRUSTED_DATA_RULE = (
 )
 RETRIEVED_MEMORY_TAG_OVERHEAD_CHARS = 80
 BEAM_TYPED_PROJECTION_CANDIDATE_MAX_CHARS = 900
+BEAM_DIRECT_EVIDENCE_CANDIDATE_MAX_CHARS = 420
 BEAM_SELECTOR_CANDIDATE_MAX_CHARS = 1200
 BEAM_SELECTOR_STRUCTURED_EVIDENCE_MAX_CHARS = 4000
 BEAM_STATE_LEDGER_DEFAULT_MAX_EVENTS = 20
@@ -1735,6 +1736,92 @@ def beam_state_marker_present(category: str, text: str) -> bool:
     return False
 
 
+def beam_memory_source_id_count(row: dict[str, Any]) -> int:
+    metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+    source_ids = metadata.get("source_ids")
+    if isinstance(source_ids, list):
+        return len(source_ids)
+    return 999999
+
+
+def beam_direct_answer_span_candidates(
+    question: dict[str, Any],
+    text: str,
+    *,
+    max_chars: int = BEAM_DIRECT_EVIDENCE_CANDIDATE_MAX_CHARS,
+) -> list[dict[str, Any]]:
+    category = str(question.get("category") or "")
+    terms = {term for term in beam_question_terms(question) if term and term not in BEAM_GENERIC_TERMS}
+    candidates: list[dict[str, Any]] = []
+
+    def add_candidate(role: str, value: str) -> None:
+        span = re.sub(r"\s+", " ", str(value or "").strip())
+        if not span:
+            return
+        if len(span) > max_chars:
+            span = excerpt_memory_text(span, list(terms), max_chars).replace("\n", " ").strip()
+        if not span:
+            return
+        role_name = str(role or "").lower()
+        role_prefix = {"user": "User", "assistant": "Assistant"}.get(role_name, "")
+        answer = f"{role_prefix}: {span}" if role_prefix else span
+        lowered = answer.lower()
+        overlap = sum(1 for term in terms if term in lowered)
+        marker = beam_state_marker_present(category, answer)
+        if overlap < 1 and not marker:
+            return
+        candidates.append(
+            {
+                "answer": answer,
+                "overlap": overlap,
+                "marker": marker,
+                "role": role_name,
+                "chars": len(answer),
+            }
+        )
+
+    turns = split_beam_turns(text)
+    if not turns:
+        turns = [{"role": "", "text": text}]
+    for turn in turns:
+        role = str(turn.get("role") or "")
+        raw = str(turn.get("text") or "")
+        for part in re.split(r"(?<=[.!?])\s+|\n+|\s{2,}", raw):
+            part = part.strip()
+            if not part:
+                continue
+            if len(part) <= max_chars:
+                add_candidate(role, part)
+                continue
+            for start in range(0, len(part), max(max_chars - 80, 120)):
+                add_candidate(role, part[start : start + max_chars])
+    return candidates
+
+
+def beam_best_direct_answer_span(
+    question: dict[str, Any],
+    text: str,
+    *,
+    max_chars: int = BEAM_DIRECT_EVIDENCE_CANDIDATE_MAX_CHARS,
+) -> str:
+    candidates = beam_direct_answer_span_candidates(question, text, max_chars=max_chars)
+    if not candidates:
+        return ""
+    category = str(question.get("category") or "").lower()
+
+    def score(candidate: dict[str, Any]) -> tuple[float, int]:
+        role = str(candidate.get("role") or "")
+        role_bonus = 1.5 if role == "user" and category in {"instruction_following", "preference_following"} else 0.0
+        marker_bonus = 2.0 if bool(candidate.get("marker")) else 0.0
+        length_penalty = max(int(candidate.get("chars") or 0) - 260, 0) / 220.0
+        return (
+            float(candidate.get("overlap") or 0) * 2.0 + marker_bonus + role_bonus - length_penalty,
+            -int(candidate.get("chars") or 0),
+        )
+
+    return str(sorted(candidates, key=score, reverse=True)[0].get("answer") or "").strip()
+
+
 def beam_typed_projection_candidate_answer(
     question: dict[str, Any],
     memories: list[dict[str, Any]],
@@ -1747,7 +1834,7 @@ def beam_typed_projection_candidate_answer(
     terms = beam_question_terms(question)
     unique_terms = set(terms)
     category = str(question.get("category") or "")
-    candidates: list[tuple[int, int, int, str]] = []
+    candidates: list[tuple[float, int, int, int, str]] = []
     for memory_rank, row in enumerate(memories[: max(max_memories, 0)], start=1):
         raw_memory = str(row.get("memory") or "").strip()
         if not raw_memory:
@@ -1755,11 +1842,70 @@ def beam_typed_projection_candidate_answer(
         lowered = raw_memory.lower()
         question_overlap = sum(1 for term in unique_terms if term and term in lowered)
         marker_score = 1 if beam_state_marker_present(category, raw_memory) else 0
-        candidates.append((question_overlap, marker_score, -memory_rank, raw_memory))
+        source_count = beam_memory_source_id_count(row)
+        narrow_score = 1 if source_count == 1 or len(raw_memory) <= max(max_chars, 0) else 0
+        answer = beam_best_direct_answer_span(question, raw_memory, max_chars=min(max(max_chars, 0), BEAM_DIRECT_EVIDENCE_CANDIDATE_MAX_CHARS))
+        if not answer:
+            answer = compact_beam_memory_excerpt(question, raw_memory, max(max_chars, 0))
+        if not answer:
+            continue
+        candidate_marker, candidate_overlap = beam_candidate_marker_overlap(question, answer)
+        score = (
+            float(question_overlap)
+            + float(candidate_overlap) * 2.0
+            + float(marker_score)
+            + (2.5 if candidate_marker else 0.0)
+            + (4.0 if narrow_score else 0.0)
+            - float(memory_rank) * 0.05
+            - max(len(answer) - BEAM_DIRECT_EVIDENCE_CANDIDATE_MAX_CHARS, 0) / 240.0
+        )
+        candidates.append((score, candidate_overlap, marker_score, -memory_rank, answer))
     if not candidates:
         return ""
-    candidates.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
-    return compact_beam_memory_excerpt(question, candidates[0][3], max(max_chars, 0))
+    candidates.sort(key=lambda item: (item[0], item[1], item[2], item[3]), reverse=True)
+    return candidates[0][4]
+
+
+def beam_information_extraction_candidate_answer(
+    question: dict[str, Any],
+    memories: list[dict[str, Any]],
+    *,
+    max_memories: int = 20,
+    max_chars: int = BEAM_DIRECT_EVIDENCE_CANDIDATE_MAX_CHARS,
+) -> str:
+    if str(question.get("category") or "").lower() != "information_extraction":
+        return ""
+    terms = {term for term in beam_question_terms(question) if term and term not in BEAM_GENERIC_TERMS}
+    candidates: list[tuple[float, int, str]] = []
+    for memory_rank, row in enumerate(memories[: max(max_memories, 0)], start=1):
+        raw_memory = str(row.get("memory") or "").strip()
+        if not raw_memory:
+            continue
+        source_count = beam_memory_source_id_count(row)
+        narrow_score = 1 if source_count == 1 or len(raw_memory) <= max_chars * 3 else 0
+        for candidate in beam_direct_answer_span_candidates(question, raw_memory, max_chars=max_chars):
+            answer = str(candidate.get("answer") or "").strip()
+            if not answer:
+                continue
+            lowered = answer.lower()
+            overlap = sum(1 for term in terms if term in lowered)
+            role = str(candidate.get("role") or "")
+            score = (
+                float(overlap) * 2.0
+                + (1.0 if role == "user" else 0.0)
+                + (2.0 if narrow_score else 0.0)
+                - float(memory_rank) * 0.04
+                - max(len(answer) - 260, 0) / 360.0
+            )
+            candidates.append((score, -len(answer), answer))
+    if not candidates:
+        return ""
+    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return candidates[0][2]
+
+
+def beam_answer_selector_question_path(question: dict[str, Any]) -> bool:
+    return is_beam_current_state_question(question) or str(question.get("category") or "").lower() == "information_extraction"
 
 
 def normalized_beam_candidate_answer(value: str) -> str:
@@ -1778,6 +1924,8 @@ def beam_candidate_marker_overlap(question: dict[str, Any], answer: str) -> tupl
 def beam_trusted_typed_projection_candidate_index(question: dict[str, Any], candidates: list[dict[str, str]]) -> int:
     if not is_beam_current_state_question(question):
         return 0
+    if str(question.get("category") or "").lower() != "preference_following":
+        return 0
     scored_typed: list[tuple[int, int, str]] = []
     for index, candidate in enumerate(candidates, start=1):
         if str(candidate.get("kind") or "") != "typed_projection":
@@ -1786,7 +1934,7 @@ def beam_trusted_typed_projection_candidate_index(question: dict[str, Any], cand
         if not answer:
             continue
         marker, overlap = beam_candidate_marker_overlap(question, answer)
-        if overlap < 1 or (not marker and overlap < 4):
+        if not marker or overlap < 1:
             continue
         scored_typed.append((overlap, index, normalized_beam_candidate_answer(answer)))
     if not scored_typed:
@@ -2703,7 +2851,7 @@ def build_answer_messages(
     beam_question = beam_evidence_windows and is_beam
     beam_contract_question = beam_answer_contract and is_beam and not beam_category_synthesis
     beam_structured_question = bool(beam_structured_evidence and beam_structured_evidence.strip()) and is_beam
-    beam_synthesis_question = beam_category_synthesis and is_beam
+    beam_direct_rules_question = is_beam
     beam_state_question = isinstance(beam_state_reducer, dict) and is_beam
     longmemeval_question = longmemeval_evidence_windows and is_longmemeval
     longmemeval_structured_question = (
@@ -2850,7 +2998,7 @@ def build_answer_messages(
                     "\n".join(f"- {line}" for line in beam_direct_answer_lines(str(question.get("category") or ""))),
                     "",
                 ]
-                if beam_synthesis_question
+                if beam_direct_rules_question
                 else []
             ),
             *(
@@ -2934,7 +3082,7 @@ def build_answer_messages(
                 [
                     "Follow the BEAM direct answer rules exactly. Do not mention rubric criteria, source IDs, or gold evidence IDs.",
                 ]
-                if beam_synthesis_question
+                if beam_direct_rules_question
                 else []
             ),
             *(
@@ -3888,47 +4036,50 @@ def run_openai_compatible(
                 if (
                     config.beam_answer_candidate_selector
                     and is_beam
-                    and beam_current_state_path
+                    and beam_answer_selector_question_path(question)
                     and not beam_retrieved_excerpt_direct_bypass_used
                     and not verified_answer
-                    and isinstance(beam_resolved_state, dict)
+                    and (
+                        (beam_current_state_path and isinstance(beam_resolved_state, dict))
+                        or str(question.get("category") or "").lower() == "information_extraction"
+                    )
                 ):
-                    alternate_state = None if isinstance(beam_state_for_answer, dict) else beam_resolved_state
-                    alternate_messages = build_answer_messages(
-                        question,
-                        memories,
-                        max_memories=config.answer_max_memories,
-                        memory_max_chars=config.answer_memory_max_chars,
-                        total_max_chars=config.answer_total_max_chars,
-                        temporal_facts=temporal_facts,
-                        bundle_dataset=str(bundle.get("dataset") or ""),
-                        beam_evidence_windows=config.beam_evidence_windows,
-                        beam_answer_contract=config.beam_answer_contract,
-                        beam_structured_evidence=structured_evidence,
-                        beam_turn_neighborhoods=config.beam_turn_neighborhoods,
-                        beam_category_synthesis=config.beam_category_synthesis,
-                        beam_state_reducer=alternate_state,
-                        longmemeval_evidence_windows=config.longmemeval_evidence_windows,
-                        longmemeval_structured_evidence=structured_evidence,
-                    )
-                    alternate_payload = add_temperature(
-                        {
-                            "model": config.answerer_model,
-                            "messages": alternate_messages,
-                        },
-                        config,
-                    )
-                    try:
-                        alternate_response = http_post(alternate_payload, config.api_key, config.base_url)
-                    except Exception as exc:
-                        return provider_failure(exc, question, top_k)
-                    usage_rows.append(alternate_response)
-                    alternate_answer = str(alternate_response.get("text") or "")
                     candidates = [
                         {"id": "candidate_1", "kind": "normal", "answer": generated_answer},
-                        {"id": "candidate_2", "kind": "alternate", "answer": alternate_answer},
                     ]
-                    if config.beam_extractive_candidate:
+                    if beam_current_state_path:
+                        alternate_state = None if isinstance(beam_state_for_answer, dict) else beam_resolved_state
+                        alternate_messages = build_answer_messages(
+                            question,
+                            memories,
+                            max_memories=config.answer_max_memories,
+                            memory_max_chars=config.answer_memory_max_chars,
+                            total_max_chars=config.answer_total_max_chars,
+                            temporal_facts=temporal_facts,
+                            bundle_dataset=str(bundle.get("dataset") or ""),
+                            beam_evidence_windows=config.beam_evidence_windows,
+                            beam_answer_contract=config.beam_answer_contract,
+                            beam_structured_evidence=structured_evidence,
+                            beam_turn_neighborhoods=config.beam_turn_neighborhoods,
+                            beam_category_synthesis=config.beam_category_synthesis,
+                            beam_state_reducer=alternate_state,
+                            longmemeval_evidence_windows=config.longmemeval_evidence_windows,
+                            longmemeval_structured_evidence=structured_evidence,
+                        )
+                        alternate_payload = add_temperature(
+                            {
+                                "model": config.answerer_model,
+                                "messages": alternate_messages,
+                            },
+                            config,
+                        )
+                        try:
+                            alternate_response = http_post(alternate_payload, config.api_key, config.base_url)
+                        except Exception as exc:
+                            return provider_failure(exc, question, top_k)
+                        usage_rows.append(alternate_response)
+                        candidates.append({"id": "candidate_2", "kind": "alternate", "answer": str(alternate_response.get("text") or "")})
+                    if config.beam_extractive_candidate and beam_current_state_path:
                         extractive_payload = add_temperature(
                             {
                                 "model": config.answerer_model,
@@ -3952,7 +4103,7 @@ def run_openai_compatible(
                                 "answer": str(extractive_response.get("text") or ""),
                             }
                         )
-                    if config.beam_ranked_state_memory_candidate:
+                    if config.beam_ranked_state_memory_candidate and beam_current_state_path:
                         ranked_state_payload = add_temperature(
                             {
                                 "model": config.answerer_model,
@@ -3975,7 +4126,7 @@ def run_openai_compatible(
                                 "answer": str(ranked_state_response.get("text") or ""),
                             }
                         )
-                    if config.beam_state_direct_candidate:
+                    if config.beam_state_direct_candidate and beam_current_state_path:
                         state_direct_answer = beam_state_direct_candidate_answer(
                             beam_resolved_state,
                             beam_state_verifier_result,
@@ -3988,7 +4139,7 @@ def run_openai_compatible(
                                     "answer": state_direct_answer,
                                 }
                             )
-                    if config.beam_typed_projection_candidate:
+                    if config.beam_typed_projection_candidate and beam_current_state_path:
                         typed_projection_answer = beam_typed_projection_candidate_answer(question, memories)
                         if typed_projection_answer:
                             candidates.append(
@@ -3996,6 +4147,16 @@ def run_openai_compatible(
                                     "id": f"candidate_{len(candidates) + 1}",
                                     "kind": "typed_projection",
                                     "answer": typed_projection_answer,
+                                }
+                            )
+                    if str(question.get("category") or "").lower() == "information_extraction":
+                        information_extraction_answer = beam_information_extraction_candidate_answer(question, memories)
+                        if information_extraction_answer:
+                            candidates.append(
+                                {
+                                    "id": f"candidate_{len(candidates) + 1}",
+                                    "kind": "information_extraction",
+                                    "answer": information_extraction_answer,
                                 }
                             )
                     beam_answer_candidate_count = len(candidates)
@@ -4024,29 +4185,34 @@ def run_openai_compatible(
                             "confidence": 1.0,
                         }
                     else:
-                        selector_payload = add_temperature(
-                            {
-                                "model": config.answerer_model,
-                                "messages": build_beam_answer_selector_messages(
-                                    question,
-                                    memories,
-                                    candidates,
-                                    structured_evidence=structured_evidence,
-                                ),
-                            },
-                            config,
-                        )
-                        try:
-                            selector_response = http_post(selector_payload, config.api_key, config.base_url)
-                        except Exception as exc:
-                            return provider_failure(exc, question, top_k)
-                        usage_rows.append(selector_response)
-                        beam_answer_selector_result = parse_beam_answer_selector(
-                            str(selector_response.get("text") or ""),
-                            beam_answer_candidate_count,
-                        )
-                    beam_answer_selected_candidate_index = int(beam_answer_selector_result.get("selected_index") or 0)
-                    if beam_answer_selector_result.get("parser_status") in {
+                        if beam_answer_candidate_count > 1:
+                            selector_payload = add_temperature(
+                                {
+                                    "model": config.answerer_model,
+                                    "messages": build_beam_answer_selector_messages(
+                                        question,
+                                        memories,
+                                        candidates,
+                                        structured_evidence=structured_evidence,
+                                    ),
+                                },
+                                config,
+                            )
+                            try:
+                                selector_response = http_post(selector_payload, config.api_key, config.base_url)
+                            except Exception as exc:
+                                return provider_failure(exc, question, top_k)
+                            usage_rows.append(selector_response)
+                            beam_answer_selector_result = parse_beam_answer_selector(
+                                str(selector_response.get("text") or ""),
+                                beam_answer_candidate_count,
+                            )
+                    beam_answer_selected_candidate_index = (
+                        int(beam_answer_selector_result.get("selected_index") or 0)
+                        if isinstance(beam_answer_selector_result, dict)
+                        else 0
+                    )
+                    if isinstance(beam_answer_selector_result, dict) and beam_answer_selector_result.get("parser_status") in {
                         "ok",
                         "ranked_state_memory_direct_bypass",
                         "typed_projection_direct_bypass",

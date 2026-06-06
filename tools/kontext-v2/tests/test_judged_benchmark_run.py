@@ -2966,6 +2966,101 @@ def test_beam_information_extraction_skips_current_state_path(tmp_path):
     assert_public_report_has_no_raw_payload(result)
 
 
+def test_beam_information_extraction_answer_prompt_includes_direct_fact_guidance():
+    module = load_module()
+
+    messages = module.build_answer_messages(
+        {"category": "information_extraction", "question": "Which staging token was mentioned?"},
+        [{"memory": "assistant: The staging token was citadel-42."}],
+        bundle_dataset="beam_1M",
+        beam_structured_evidence="candidate_facts: staging token citadel-42",
+    )
+    user_prompt = messages[1]["content"]
+
+    assert "Answer the exact requested fact or value." in user_prompt
+    assert "Return one direct answer, not sectioned notes." in user_prompt
+
+
+def test_beam_information_extraction_candidate_selector_can_choose_deterministic_candidate(tmp_path):
+    module = load_module()
+    bundle_path = tmp_path / "beam-private.json"
+    bundle_path.write_text(
+        json.dumps(
+            {
+                "dataset": "beam_1M",
+                "run_id": "private-beam-slice",
+                "mode": "private-judged-input-bundle",
+                "runs_model_calls": False,
+                "contains_raw_benchmark_text": True,
+                "contains_live_user_memory": False,
+                "top_k_values": [20],
+                "questions": [
+                    {
+                        "question_id": "beam-q1",
+                        "category": "information_extraction",
+                        "question": "Which staging token was mentioned?",
+                        "ground_truth_answer": "citadel-42",
+                        "retrieved_memories_by_top_k": {
+                            "20": [
+                                {
+                                    "memory": "assistant: The staging token was citadel-42.",
+                                    "metadata": {"source_ids": ["turn-1"]},
+                                }
+                            ]
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls = []
+
+    def fake_post(payload, api_key, base_url):
+        calls.append(payload)
+        system_prompt = payload["messages"][0]["content"].lower()
+        user_prompt = payload["messages"][1]["content"]
+        if "select the best beam candidate answer" in system_prompt:
+            assert "Candidate candidate_2:" in user_prompt
+            assert "information_extraction" in user_prompt
+            return {
+                "text": '{"selected_id":"candidate_2","reason_code":"deterministic_evidence","confidence":0.91}',
+                "usage": {"prompt_tokens": 13, "completion_tokens": 4},
+            }
+        if "strict benchmark judge" in system_prompt:
+            assert "citadel-42" in user_prompt
+            return {"text": '{"correct": true, "score": 1.0}', "usage": {"prompt_tokens": 11, "completion_tokens": 3}}
+        return {"text": "wrong token", "usage": {"prompt_tokens": 17, "completion_tokens": 6}}
+
+    result = module.run_openai_compatible(
+        module.load_bundle(bundle_path),
+        module.ExternalRunConfig(
+            approved=True,
+            max_cost_usd=1.0,
+            answerer_model="answer-model",
+            judge_model="judge-model",
+            api_key="test-key",
+            base_url="https://example.test/v1/chat/completions",
+            prices=module.PriceConfig(1, 1, 1, 1),
+            beam_answer_candidate_selector=True,
+        ),
+        cutoffs="20",
+        http_post=fake_post,
+    )
+    cutoff = result["questions"][0]["cutoff_results"]["20"]
+    rendered = json.dumps(result)
+
+    assert len(calls) == 3
+    assert cutoff["beam_answer_candidate_selector"] is True
+    assert cutoff["beam_answer_candidate_count"] == 2
+    assert cutoff["beam_answer_selected_candidate_index"] == 2
+    assert cutoff["beam_answer_selector_status"] == "ok"
+    assert cutoff["generated_answer_hash"] == module.stable_hash("Assistant: The staging token was citadel-42.")
+    assert "citadel-42" not in rendered
+    assert "wrong token" not in rendered
+    assert_public_report_has_no_raw_payload(result)
+
+
 def test_beam_broad_verified_state_uses_focused_state_answer(tmp_path):
     module = load_module()
     bundle_path = tmp_path / "beam-private.json"
@@ -4135,6 +4230,54 @@ def test_beam_typed_projection_candidate_function_ranks_matching_state_memory():
     assert module.beam_typed_projection_candidate_answer(question, [], max_memories=0) == ""
 
 
+def test_beam_typed_projection_candidate_prefers_narrow_source_memory_over_verbose_transcript():
+    module = load_module()
+    question = {
+        "category": "preference_following",
+        "question": "What staging interface does the user prefer for invoice replies?",
+    }
+    verbose_transcript = "\n".join(
+        [
+            "User: I prefer the harbor staging interface for invoice replies.",
+            "Assistant: Noted the harbor staging interface for invoice replies.",
+            "User: More unrelated invoice replies and staging interface notes. " * 30,
+        ]
+    )
+    narrow_projection = (
+        "User: I prefer the citadel staging interface for invoice replies. "
+        "Use that preference when answering invoice staging questions."
+    )
+
+    answer = module.beam_typed_projection_candidate_answer(
+        question,
+        [
+            {"memory": verbose_transcript, "metadata": {"source_ids": [f"turn-{index}" for index in range(80)]}},
+            {"memory": narrow_projection, "metadata": {"source_ids": ["turn-42"]}},
+        ],
+    )
+
+    assert answer == "User: I prefer the citadel staging interface for invoice replies."
+
+
+def test_beam_typed_projection_candidate_returns_direct_sentence_from_narrow_memory():
+    module = load_module()
+    question = {
+        "category": "preference_following",
+        "question": "What staging interface does the user prefer for invoice replies?",
+    }
+    narrow_projection = (
+        "User: I prefer the citadel staging interface for invoice replies. "
+        + ("Unrelated archived preference filler. " * 20)
+    )
+
+    answer = module.beam_typed_projection_candidate_answer(
+        question,
+        [{"memory": narrow_projection, "metadata": {"source_ids": ["turn-42"]}}],
+    )
+
+    assert answer == "User: I prefer the citadel staging interface for invoice replies."
+
+
 def test_beam_trusted_typed_projection_candidate_index_accepts_clear_current_state():
     module = load_module()
     question = {
@@ -4149,7 +4292,7 @@ def test_beam_trusted_typed_projection_candidate_index_accepts_clear_current_sta
     assert module.beam_trusted_typed_projection_candidate_index(question, candidates) == 2
 
 
-def test_beam_trusted_typed_projection_candidate_index_accepts_strong_overlap_without_marker():
+def test_beam_trusted_typed_projection_candidate_index_rejects_strong_overlap_without_marker():
     module = load_module()
     question = {
         "category": "preference_following",
@@ -4164,7 +4307,7 @@ def test_beam_trusted_typed_projection_candidate_index_accepts_strong_overlap_wi
         },
     ]
 
-    assert module.beam_trusted_typed_projection_candidate_index(question, candidates) == 2
+    assert module.beam_trusted_typed_projection_candidate_index(question, candidates) == 0
 
 
 def test_beam_trusted_typed_projection_candidate_index_rejects_ambiguous_or_unsupported_candidates():
@@ -4546,12 +4689,12 @@ def test_beam_typed_projection_candidate_can_be_selected_after_all_other_candida
                 "questions": [
                     {
                         "question_id": "beam-q1",
-                        "category": "instruction_following",
-                        "question": "What staging interface should the user use?",
+                        "category": "preference_following",
+                        "question": "What staging interface does the user prefer?",
                         "ground_truth_answer": "Use the citadel staging interface.",
                         "retrieved_memories_by_top_k": {
                             "20": [
-                                {"memory": "User: You should use the citadel staging interface."},
+                                {"memory": "User: I prefer the citadel staging interface."},
                             ]
                         },
                     }
@@ -4634,7 +4777,7 @@ def test_beam_typed_projection_candidate_can_be_selected_after_all_other_candida
     assert cutoff["beam_answer_candidate_count"] == 6
     assert cutoff["beam_answer_selected_candidate_index"] == 6
     assert cutoff["beam_answer_selector_status"] == "typed_projection_direct_bypass"
-    assert cutoff["generated_answer_hash"] == module.stable_hash("User: You should use the citadel staging interface.")
+    assert cutoff["generated_answer_hash"] == module.stable_hash("User: I prefer the citadel staging interface.")
     assert "citadel staging interface" not in rendered
     assert "private reducer direct answer" not in rendered
     assert_public_report_has_no_raw_payload(result)
