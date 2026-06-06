@@ -1879,11 +1879,6 @@ def beam_information_extraction_candidate_answer(
 ) -> str:
     if str(question.get("category") or "").lower() != "information_extraction":
         return ""
-    question_text = str(question.get("question") or "").lower()
-    if not re.search(r"\b(?:what|which|who|where|when)\b", question_text):
-        return ""
-    if re.search(r"\b(?:list|summarize|summary|all|items|details|options|examples|what were|which ones)\b", question_text):
-        return ""
     terms = {term for term in beam_question_terms(question) if term and term not in BEAM_GENERIC_TERMS}
     candidates: list[dict[str, Any]] = []
     evidence_candidates: list[dict[str, Any]] = []
@@ -2372,9 +2367,10 @@ def beam_evidence_window_lines(
     selected.extend(sorted(scored_remainder, key=lambda item: (-item[0], item[1], item[2])))
     if not selected:
         selected = all_windows
+    selected_for_output = sorted(selected, key=lambda item: (-item[0], item[1], item[2]))[: max(max_windows, 0)]
     lines: list[str] = []
     remaining_chars = max(max_chars, 0)
-    for score, memory_rank, window_index, window in selected[: max(max_windows, 0)]:
+    for score, memory_rank, window_index, window in selected_for_output:
         clean_window = window[:1400]
         line = (
             f"- memory_rank={memory_rank}; window={window_index}; score={score:.2f}; "

@@ -3076,19 +3076,66 @@ def test_beam_information_extraction_skips_current_state_path(tmp_path):
     assert_public_report_has_no_raw_payload(result)
 
 
-def test_beam_information_extraction_candidate_requires_singular_fact_question():
+def test_beam_information_extraction_candidate_handles_broad_fact_question():
     module = load_module()
 
-    memories = [{"memory": "assistant: The staging token was citadel-42.", "metadata": {"source_ids": ["turn-1"]}}]
+    memories = [
+        {
+            "memory": (
+                "assistant: The staging token details were citadel-42 for invoice sync, "
+                "kept in the deployment handoff, and scoped to the billing workspace."
+            ),
+            "metadata": {"source_ids": ["turn-1"]},
+        }
+    ]
 
     assert module.beam_information_extraction_candidate_answer(
         {"category": "information_extraction", "question": "Which staging token was mentioned?"},
         memories,
     )
-    assert module.beam_information_extraction_candidate_answer(
+    broad_answer = module.beam_information_extraction_candidate_answer(
         {"category": "information_extraction", "question": "Summarize the staging token details from the conversation."},
         memories,
-    ) == ""
+    )
+    assert "citadel-42" in broad_answer
+    assert "invoice sync" in broad_answer
+    cue_free_answer = module.beam_information_extraction_candidate_answer(
+        {"category": "information_extraction", "question": "Answer the staging token handoff from the conversation."},
+        memories,
+    )
+    assert "citadel-42" in cue_free_answer
+    assert "invoice sync" in cue_free_answer
+
+
+def test_beam_evidence_window_lines_prioritizes_high_scoring_remainder_windows():
+    module = load_module()
+    question = {
+        "category": "information_extraction",
+        "question": "Summarize the staging token invoice sync billing workspace details.",
+    }
+    low_score_line = "assistant: unrelated survey filler with enough distinct tokens to be survey worthy."
+    first_high_score_line = "assistant: staging token invoice sync billing workspace citadel-42 first exact details."
+    second_high_score_line = "assistant: staging token invoice sync billing workspace citadel-43 second exact details."
+    memory = "\n".join(
+        [
+            first_high_score_line,
+            low_score_line,
+            low_score_line.replace("survey", "middle"),
+            second_high_score_line,
+            low_score_line.replace("survey", "tail"),
+        ]
+    )
+
+    lines = module.beam_evidence_window_lines(
+        question,
+        [{"memory": memory, "metadata": {"source_ids": ["bulk"] * 50}}],
+        max_windows=2,
+        max_chars=2000,
+    )
+
+    rendered = "\n".join(lines)
+    assert "citadel-42" in rendered
+    assert "citadel-43" in rendered
 
 
 def test_beam_information_extraction_candidate_prefers_top_evidence_window_over_low_rank_question_echo():
@@ -3196,7 +3243,7 @@ def test_beam_information_extraction_candidate_direct_bypasses_selector(tmp_path
     assert_public_report_has_no_raw_payload(result)
 
 
-def test_beam_information_extraction_extractive_candidate_can_be_selected_for_broad_question(tmp_path):
+def test_beam_information_extraction_candidate_direct_bypasses_broad_question(tmp_path):
     module = load_module()
     bundle_path = tmp_path / "beam-private.json"
     bundle_path.write_text(
@@ -3237,11 +3284,7 @@ def test_beam_information_extraction_extractive_candidate_can_be_selected_for_br
             assert "BEAM evidence windows" in user_prompt
             return {"text": "Assistant: citadel-42 for invoice sync.", "usage": {"prompt_tokens": 13, "completion_tokens": 4}}
         if "select the best beam candidate answer" in system_prompt:
-            assert "Kind: extractive" in user_prompt
-            return {
-                "text": '{"selected_id":"candidate_2","reason_code":"extractive_direct","confidence":0.91}',
-                "usage": {"prompt_tokens": 11, "completion_tokens": 3},
-            }
+            raise AssertionError("broad information extraction candidate should bypass selector")
         if "strict benchmark judge" in system_prompt:
             assert "citadel-42 for invoice sync" in user_prompt
             return {"text": '{"correct": true, "score": 1.0}', "usage": {"prompt_tokens": 9, "completion_tokens": 3}}
@@ -3266,11 +3309,11 @@ def test_beam_information_extraction_extractive_candidate_can_be_selected_for_br
     cutoff = result["questions"][0]["cutoff_results"]["20"]
     rendered = json.dumps(result)
 
-    assert cutoff["beam_answer_candidate_count"] == 2
-    assert cutoff["beam_answer_selected_candidate_index"] == 2
-    assert cutoff["beam_answer_selected_candidate_kind"] == "extractive"
-    assert cutoff["beam_answer_selector_status"] == "ok"
-    assert cutoff["beam_extractive_candidate_used"] is True
+    assert cutoff["beam_answer_candidate_count"] == 3
+    assert cutoff["beam_answer_selected_candidate_index"] == 3
+    assert cutoff["beam_answer_selected_candidate_kind"] == "information_extraction"
+    assert cutoff["beam_answer_selector_status"] == "information_extraction_direct_bypass"
+    assert cutoff["beam_extractive_candidate_used"] is False
     assert "citadel-42" not in rendered
     assert_public_report_has_no_raw_payload(result)
 
