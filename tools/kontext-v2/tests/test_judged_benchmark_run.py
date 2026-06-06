@@ -3265,6 +3265,84 @@ def test_beam_information_extraction_extractive_candidate_can_be_selected_for_br
     assert_public_report_has_no_raw_payload(result)
 
 
+def test_beam_current_state_extractive_candidate_selector_can_run_without_state_reducer(tmp_path):
+    module = load_module()
+    bundle_path = tmp_path / "beam-private.json"
+    bundle_path.write_text(
+        json.dumps(
+            {
+                "dataset": "beam_1M",
+                "run_id": "private-beam-slice",
+                "mode": "private-judged-input-bundle",
+                "runs_model_calls": False,
+                "contains_raw_benchmark_text": True,
+                "contains_live_user_memory": False,
+                "top_k_values": [20],
+                "questions": [
+                    {
+                        "question_id": "beam-q1",
+                        "category": "preference_following",
+                        "question": "Which staging interface does the user prefer?",
+                        "ground_truth_answer": "citadel interface",
+                        "retrieved_memories_by_top_k": {
+                            "20": [
+                                {
+                                    "memory": "user: I prefer the citadel interface for staging work.",
+                                    "metadata": {"source_ids": ["turn-1"]},
+                                }
+                            ]
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_post(payload, _api_key, _base_url):
+        system_prompt = payload["messages"][0]["content"].lower()
+        user_prompt = payload["messages"][1]["content"]
+        if "extract a direct beam answer" in system_prompt:
+            return {"text": "User prefers the citadel interface.", "usage": {"prompt_tokens": 13, "completion_tokens": 4}}
+        if "select the best beam candidate answer" in system_prompt:
+            assert "Kind: extractive" in user_prompt
+            return {
+                "text": '{"selected_id":"candidate_3","reason_code":"extractive_direct","confidence":0.9}',
+                "usage": {"prompt_tokens": 11, "completion_tokens": 3},
+            }
+        if "strict benchmark judge" in system_prompt:
+            assert "citadel interface" in user_prompt
+            return {"text": '{"correct": true, "score": 1.0}', "usage": {"prompt_tokens": 9, "completion_tokens": 3}}
+        return {"text": "Verbose staging preference notes.", "usage": {"prompt_tokens": 7, "completion_tokens": 2}}
+
+    result = module.run_openai_compatible(
+        module.load_bundle(bundle_path),
+        module.ExternalRunConfig(
+            approved=True,
+            max_cost_usd=1,
+            answerer_model="answerer",
+            judge_model="judge",
+            api_key="test-key",
+            base_url="https://example.test/v1/chat/completions",
+            prices=module.PriceConfig(1, 1, 1, 1),
+            beam_answer_candidate_selector=True,
+            beam_extractive_candidate=True,
+        ),
+        cutoffs="20",
+        http_post=fake_post,
+    )
+    cutoff = result["questions"][0]["cutoff_results"]["20"]
+    rendered = json.dumps(result)
+
+    assert "beam_state_reducer" not in cutoff
+    assert cutoff["beam_answer_candidate_count"] == 3
+    assert cutoff["beam_answer_selected_candidate_index"] == 3
+    assert cutoff["beam_answer_selected_candidate_kind"] == "extractive"
+    assert cutoff["beam_extractive_candidate_used"] is True
+    assert "citadel interface" not in rendered
+    assert_public_report_has_no_raw_payload(result)
+
+
 def test_beam_broad_verified_state_uses_focused_state_answer(tmp_path):
     module = load_module()
     bundle_path = tmp_path / "beam-private.json"

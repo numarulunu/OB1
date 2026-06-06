@@ -4102,7 +4102,10 @@ def run_openai_compatible(
                     and not beam_retrieved_excerpt_direct_bypass_used
                     and not verified_answer
                     and (
-                        (beam_current_state_path and isinstance(beam_resolved_state, dict))
+                        (
+                            beam_current_state_path
+                            and (isinstance(beam_resolved_state, dict) or config.beam_extractive_candidate)
+                        )
                         or str(question.get("category") or "").lower() == "information_extraction"
                     )
                 ):
