@@ -4149,6 +4149,24 @@ def test_beam_trusted_typed_projection_candidate_index_accepts_clear_current_sta
     assert module.beam_trusted_typed_projection_candidate_index(question, candidates) == 2
 
 
+def test_beam_trusted_typed_projection_candidate_index_accepts_strong_overlap_without_marker():
+    module = load_module()
+    question = {
+        "category": "preference_following",
+        "question": "What staging interface should dashboard invoice replies use?",
+    }
+    candidates = [
+        {"id": "candidate_1", "kind": "normal", "answer": "fallback answer"},
+        {
+            "id": "candidate_2",
+            "kind": "typed_projection",
+            "answer": "Dashboard invoice replies use the citadel staging interface.",
+        },
+    ]
+
+    assert module.beam_trusted_typed_projection_candidate_index(question, candidates) == 2
+
+
 def test_beam_trusted_typed_projection_candidate_index_rejects_ambiguous_or_unsupported_candidates():
     module = load_module()
     question = {

@@ -1786,7 +1786,7 @@ def beam_trusted_typed_projection_candidate_index(question: dict[str, Any], cand
         if not answer:
             continue
         marker, overlap = beam_candidate_marker_overlap(question, answer)
-        if not marker or overlap < 2:
+        if overlap < 1 or (not marker and overlap < 4):
             continue
         scored_typed.append((overlap, index, normalized_beam_candidate_answer(answer)))
     if not scored_typed:
