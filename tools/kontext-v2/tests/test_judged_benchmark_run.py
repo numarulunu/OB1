@@ -2371,6 +2371,95 @@ def test_beam_json_parsers_accept_wrapped_json_objects():
     assert selector["selected_index"] == 2
 
 
+def test_beam_json_model_tasks_request_json_response_format():
+    module = load_module()
+    bundle = {
+        "dataset": "beam_1M",
+        "run_id": "json-format-test",
+        "retrieval_backend": "kontext",
+        "questions": [
+            {
+                "question_id": "beam-json-format",
+                "category": "preference_following",
+                "question": "Which staging interface does the user prefer?",
+                "ground_truth_answer": "citadel",
+                "retrieved_memories_by_top_k": {
+                    "20": [
+                        {
+                            "memory": "User: I prefer the citadel staging interface for invoices.",
+                            "metadata": {"source_ids": ["turn-1"]},
+                        }
+                    ]
+                },
+            }
+        ],
+    }
+    json_task_formats = {}
+    answer_formats = []
+
+    def fake_post(payload, _api_key, _base_url):
+        system_prompt = payload["messages"][0]["content"].lower()
+        if "resolve beam current state" in system_prompt:
+            json_task_formats["state_reducer"] = payload.get("response_format")
+            return {
+                "text": json.dumps(
+                    {
+                        "active_state": "",
+                        "replaced_state": "",
+                        "direct_answer": "",
+                        "constraints": [],
+                        "uncertainty": "test",
+                        "supporting_event_hashes": [],
+                    }
+                ),
+                "usage": {"prompt_tokens": 9, "completion_tokens": 3},
+            }
+        if "verify beam resolved state" in system_prompt:
+            json_task_formats["state_verifier"] = payload.get("response_format")
+            return {
+                "text": '{"verdict":"uncertain","corrected_direct_answer":"","supporting_event_hashes":[],"reason_code":"test","confidence":0.0}',
+                "usage": {"prompt_tokens": 8, "completion_tokens": 3},
+            }
+        if "select the best beam candidate answer" in system_prompt:
+            json_task_formats["selector"] = payload.get("response_format")
+            return {
+                "text": '{"selected_id":"candidate_2","reason_code":"test","confidence":0.7}',
+                "usage": {"prompt_tokens": 7, "completion_tokens": 2},
+            }
+        if "strict benchmark judge" in system_prompt:
+            json_task_formats["judge"] = payload.get("response_format")
+            return {"text": '{"correct": true, "score": 1.0}', "usage": {"prompt_tokens": 6, "completion_tokens": 2}}
+        answer_formats.append(payload.get("response_format"))
+        return {"text": "Use the citadel interface.", "usage": {"prompt_tokens": 5, "completion_tokens": 2}}
+
+    module.run_openai_compatible(
+        bundle,
+        module.ExternalRunConfig(
+            approved=True,
+            max_cost_usd=1,
+            answerer_model="answerer",
+            judge_model="judge",
+            api_key="test-key",
+            base_url="https://example.test/v1/chat/completions",
+            prices=module.PriceConfig(1, 1, 1, 1),
+            beam_state_reducer=True,
+            beam_direct_answer_bypass=True,
+            beam_state_verifier=True,
+            beam_answer_candidate_selector=True,
+        ),
+        cutoffs="20",
+        http_post=fake_post,
+    )
+
+    assert json_task_formats == {
+        "state_reducer": {"type": "json_object"},
+        "state_verifier": {"type": "json_object"},
+        "selector": {"type": "json_object"},
+        "judge": {"type": "json_object"},
+    }
+    assert answer_formats == [None, None]
+
+
 def test_beam_verified_direct_answer_requires_support_overlap():
     module = load_module()
     resolved = {

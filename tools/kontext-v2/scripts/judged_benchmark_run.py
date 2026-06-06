@@ -3468,6 +3468,11 @@ def add_temperature(
     return payload
 
 
+def add_json_response_format(payload: dict[str, Any]) -> dict[str, Any]:
+    payload["response_format"] = {"type": "json_object"}
+    return payload
+
+
 def usage_totals(rows: list[dict[str, Any]]) -> dict[str, int]:
     totals = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     for row in rows:
@@ -3871,12 +3876,14 @@ def run_openai_compatible(
                         structured_evidence=structured_evidence,
                         bundle_dataset=str(bundle.get("dataset") or ""),
                     )
-                state_payload = add_temperature(
-                    {
-                        "model": config.answerer_model,
-                        "messages": state_messages,
-                    },
-                    config,
+                state_payload = add_json_response_format(
+                    add_temperature(
+                        {
+                            "model": config.answerer_model,
+                            "messages": state_messages,
+                        },
+                        config,
+                    )
                 )
                 try:
                     state_response = http_post(state_payload, config.api_key, config.base_url)
@@ -3894,16 +3901,18 @@ def run_openai_compatible(
                         max_events=beam_state_ledger_max_events,
                         max_chars=beam_state_ledger_max_chars,
                     )
-                verifier_payload = add_temperature(
-                    {
-                        "model": config.answerer_model,
-                        "messages": build_beam_state_verifier_messages(
-                            question,
-                            beam_state_ledger_events_rows,
-                            beam_resolved_state,
-                        ),
-                    },
-                    config,
+                verifier_payload = add_json_response_format(
+                    add_temperature(
+                        {
+                            "model": config.answerer_model,
+                            "messages": build_beam_state_verifier_messages(
+                                question,
+                                beam_state_ledger_events_rows,
+                                beam_resolved_state,
+                            ),
+                        },
+                        config,
+                    )
                 )
                 try:
                     verifier_response = http_post(verifier_payload, config.api_key, config.base_url)
@@ -4248,17 +4257,19 @@ def run_openai_compatible(
                         }
                     else:
                         if beam_answer_candidate_count > 1:
-                            selector_payload = add_temperature(
-                                {
-                                    "model": config.answerer_model,
-                                    "messages": build_beam_answer_selector_messages(
-                                        question,
-                                        memories,
-                                        candidates,
-                                        structured_evidence=structured_evidence,
-                                    ),
-                                },
-                                config,
+                            selector_payload = add_json_response_format(
+                                add_temperature(
+                                    {
+                                        "model": config.answerer_model,
+                                        "messages": build_beam_answer_selector_messages(
+                                            question,
+                                            memories,
+                                            candidates,
+                                            structured_evidence=structured_evidence,
+                                        ),
+                                    },
+                                    config,
+                                )
                             )
                             try:
                                 selector_response = http_post(selector_payload, config.api_key, config.base_url)
@@ -4302,13 +4313,15 @@ def run_openai_compatible(
             judge_texts: list[str] = []
             judge_scores: list[float] = []
             for _ in range(judge_repetitions(config.judge_units_per_question)):
-                judge_payload = add_temperature(
-                    {
-                        "model": config.judge_model,
-                        "messages": build_judge_messages(question, generated_answer),
-                    },
-                    config,
-                    max_completion_tokens=config.judge_output_tokens,
+                judge_payload = add_json_response_format(
+                    add_temperature(
+                        {
+                            "model": config.judge_model,
+                            "messages": build_judge_messages(question, generated_answer),
+                        },
+                        config,
+                        max_completion_tokens=config.judge_output_tokens,
+                    )
                 )
                 try:
                     judge_response = http_post(judge_payload, config.api_key, config.base_url)
