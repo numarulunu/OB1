@@ -3049,6 +3049,7 @@ def test_beam_information_extraction_candidate_direct_bypasses_selector(tmp_path
     assert cutoff["beam_answer_candidate_selector"] is True
     assert cutoff["beam_answer_candidate_count"] == 2
     assert cutoff["beam_answer_selected_candidate_index"] == 2
+    assert cutoff["beam_answer_selected_candidate_kind"] == "information_extraction"
     assert cutoff["beam_answer_selector_status"] == "information_extraction_direct_bypass"
     assert cutoff["generated_answer_hash"] == module.stable_hash("Assistant: The staging token was citadel-42.")
     assert "citadel-42" not in rendered
@@ -4456,6 +4457,7 @@ def test_beam_typed_projection_candidate_adds_deterministic_answer_without_extra
     assert cutoff["beam_typed_projection_candidate_used"] is True
     assert cutoff["beam_answer_candidate_count"] == 3
     assert cutoff["beam_answer_selected_candidate_index"] == 3
+    assert cutoff["beam_answer_selected_candidate_kind"] == "typed_projection"
     assert cutoff["beam_answer_selector_status"] == "typed_projection_direct_bypass"
     assert cutoff["generated_answer_hash"] == module.stable_hash("User: I prefer the citadel staging interface.")
     assert "citadel staging interface" not in rendered
@@ -4793,6 +4795,7 @@ def test_beam_typed_projection_candidate_can_be_selected_after_all_other_candida
     assert cutoff["beam_typed_projection_candidate_used"] is True
     assert cutoff["beam_answer_candidate_count"] == 6
     assert cutoff["beam_answer_selected_candidate_index"] == 6
+    assert cutoff["beam_answer_selected_candidate_kind"] == "typed_projection"
     assert cutoff["beam_answer_selector_status"] == "typed_projection_direct_bypass"
     assert cutoff["generated_answer_hash"] == module.stable_hash("User: I prefer the citadel staging interface.")
     assert "citadel staging interface" not in rendered

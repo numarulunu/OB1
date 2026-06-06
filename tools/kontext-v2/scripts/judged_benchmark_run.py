@@ -3728,6 +3728,7 @@ def run_openai_compatible(
             beam_answer_candidate_count = 0
             beam_answer_candidate_summaries: list[dict[str, Any]] = []
             beam_answer_selected_candidate_index = 0
+            beam_answer_selected_candidate_kind = ""
             beam_extractive_candidate_used = False
             beam_state_direct_candidate_used = False
             beam_ranked_state_memory_candidate_used = False
@@ -4238,22 +4239,24 @@ def run_openai_compatible(
                         "ranked_state_memory_direct_bypass",
                         "typed_projection_direct_bypass",
                     } and beam_answer_selected_candidate_index:
-                        generated_answer = candidates[beam_answer_selected_candidate_index - 1]["answer"]
+                        selected_candidate = candidates[beam_answer_selected_candidate_index - 1]
+                        generated_answer = selected_candidate["answer"]
+                        beam_answer_selected_candidate_kind = str(selected_candidate.get("kind") or "")
                         beam_extractive_candidate_used = bool(
                             config.beam_extractive_candidate
-                            and candidates[beam_answer_selected_candidate_index - 1].get("kind") == "extractive"
+                            and selected_candidate.get("kind") == "extractive"
                         )
                         beam_state_direct_candidate_used = bool(
                             config.beam_state_direct_candidate
-                            and candidates[beam_answer_selected_candidate_index - 1].get("kind") == "state_direct"
+                            and selected_candidate.get("kind") == "state_direct"
                         )
                         beam_ranked_state_memory_candidate_used = bool(
                             config.beam_ranked_state_memory_candidate
-                            and candidates[beam_answer_selected_candidate_index - 1].get("kind") == "ranked_state_memory"
+                            and selected_candidate.get("kind") == "ranked_state_memory"
                         )
                         beam_typed_projection_candidate_used = bool(
                             config.beam_typed_projection_candidate
-                            and candidates[beam_answer_selected_candidate_index - 1].get("kind") == "typed_projection"
+                            and selected_candidate.get("kind") == "typed_projection"
                         )
             judge_texts: list[str] = []
             judge_scores: list[float] = []
@@ -4388,6 +4391,7 @@ def run_openai_compatible(
                 cutoff_results[keyed]["beam_answer_candidate_selector"] = True
                 cutoff_results[keyed]["beam_answer_candidate_count"] = beam_answer_candidate_count
                 cutoff_results[keyed]["beam_answer_selected_candidate_index"] = beam_answer_selected_candidate_index
+                cutoff_results[keyed]["beam_answer_selected_candidate_kind"] = beam_answer_selected_candidate_kind
                 if beam_answer_candidate_summaries:
                     cutoff_results[keyed]["beam_answer_candidate_summaries"] = beam_answer_candidate_summaries
                 selector_status = "not_used"
