@@ -2981,6 +2981,35 @@ def test_beam_information_extraction_candidate_requires_singular_fact_question()
     ) == ""
 
 
+def test_beam_information_extraction_candidate_prefers_top_evidence_window_over_low_rank_question_echo():
+    module = load_module()
+
+    question = {"category": "information_extraction", "question": "Which staging token was mentioned for invoice sync?"}
+    memories = [
+        {
+            "memory": (
+                "User: The invoice sync note was filed today. "
+                "The remembered staging token is citadel-42. "
+                "Keep this value for the deployment handoff."
+            ),
+            "metadata": {"source_ids": ["bulk"] * 20},
+        },
+        {"memory": "Assistant: unrelated note", "metadata": {}},
+        {"memory": "Assistant: unrelated note", "metadata": {}},
+        {"memory": "Assistant: unrelated note", "metadata": {}},
+        {"memory": "Assistant: unrelated note", "metadata": {}},
+        {
+            "memory": "Assistant: Which staging token was mentioned for invoice sync? harbor-13.",
+            "metadata": {"source_ids": ["single"]},
+        },
+    ]
+
+    answer = module.beam_information_extraction_candidate_answer(question, memories)
+
+    assert "citadel-42" in answer
+    assert "harbor-13" not in answer
+
+
 def test_beam_information_extraction_candidate_direct_bypasses_selector(tmp_path):
     module = load_module()
     bundle_path = tmp_path / "beam-private.json"

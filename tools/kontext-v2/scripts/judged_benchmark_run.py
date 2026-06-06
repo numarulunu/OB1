@@ -1881,13 +1881,33 @@ def beam_information_extraction_candidate_answer(
     if re.search(r"\b(?:list|summarize|summary|all|items|details|options|examples|what were|which ones)\b", question_text):
         return ""
     terms = {term for term in beam_question_terms(question) if term and term not in BEAM_GENERIC_TERMS}
-    candidates: list[tuple[float, int, str]] = []
+    candidates: list[dict[str, Any]] = []
+    evidence_candidates: list[dict[str, Any]] = []
     for memory_rank, row in enumerate(memories[: max(max_memories, 0)], start=1):
         raw_memory = str(row.get("memory") or "").strip()
         if not raw_memory:
             continue
         source_count = beam_memory_source_id_count(row)
         narrow_score = 1 if source_count == 1 or len(raw_memory) <= max_chars * 3 else 0
+        evidence_answer = compact_beam_memory_excerpt(question, raw_memory, max_chars).replace("\n", " ").strip()
+        if evidence_answer:
+            evidence_overlap = sum(1 for term in terms if term in evidence_answer.lower())
+            if evidence_overlap >= 1:
+                evidence_score = (
+                    float(evidence_overlap) * 1.4
+                    + (2.5 if memory_rank <= 3 else 0.0)
+                    - float(memory_rank) * 0.08
+                    - max(len(evidence_answer) - 360, 0) / 360.0
+                )
+                evidence_candidates.append(
+                    {
+                        "score": evidence_score,
+                        "length_key": -len(evidence_answer),
+                        "answer": evidence_answer,
+                        "memory_rank": memory_rank,
+                        "overlap": evidence_overlap,
+                    }
+                )
         for candidate in beam_direct_answer_span_candidates(question, raw_memory, max_chars=max_chars):
             answer = str(candidate.get("answer") or "").strip()
             if not answer:
@@ -1902,11 +1922,32 @@ def beam_information_extraction_candidate_answer(
                 - float(memory_rank) * 0.04
                 - max(len(answer) - 260, 0) / 360.0
             )
-            candidates.append((score, -len(answer), answer))
+            candidates.append(
+                {
+                    "score": score,
+                    "length_key": -len(answer),
+                    "answer": answer,
+                    "memory_rank": memory_rank,
+                    "overlap": overlap,
+                }
+            )
     if not candidates:
-        return ""
-    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
-    return candidates[0][2]
+        if not evidence_candidates:
+            return ""
+        evidence_candidates.sort(key=lambda item: (item["score"], item["length_key"]), reverse=True)
+        return str(evidence_candidates[0]["answer"]).strip()
+    candidates.sort(key=lambda item: (item["score"], item["length_key"]), reverse=True)
+    best_direct = candidates[0]
+    if evidence_candidates:
+        evidence_candidates.sort(key=lambda item: (item["score"], item["length_key"]), reverse=True)
+        best_evidence = evidence_candidates[0]
+        if (
+            int(best_direct.get("memory_rank") or 0) > 5
+            and int(best_evidence.get("memory_rank") or 0) <= 3
+            and int(best_evidence.get("overlap") or 0) >= max(2, int(best_direct.get("overlap") or 0) - 2)
+        ):
+            return str(best_evidence["answer"]).strip()
+    return str(best_direct["answer"]).strip()
 
 
 def beam_answer_selector_question_path(question: dict[str, Any]) -> bool:
