@@ -688,6 +688,38 @@ def _planned_event_to_preview_event(
     )
 
 
+def _dry_run_stage_state_event_proposals(
+    state_events: list[dict[str, Any]],
+    *,
+    source_hash: str,
+    extractor_version: str,
+) -> dict[str, Any]:
+    results: list[dict[str, Any]] = []
+    for index, planned_event in enumerate(state_events):
+        if not str(planned_event.get("value_text") or "").strip():
+            continue
+        value = planned_event.get("value") if isinstance(planned_event.get("value"), dict) else {}
+        results.append(
+            {
+                "action": "dry_run_preview",
+                "id": f"preview-candidate-{index + 1}",
+                "state_key": normalize_state_key(planned_event.get("state_key")),
+                "event_type": str(planned_event.get("event_type") or ""),
+                "value_hash": make_value_hash(value),
+                "source_hash": source_hash,
+                "confidence": float(planned_event.get("confidence") or 0.0),
+                "trust_tier": str(planned_event.get("trust_tier") or ""),
+                "extractor_version": extractor_version,
+            }
+        )
+    return {
+        "ok": True,
+        "writes_applied": 0,
+        "counts": {"staged": 0, "would_stage": len(results)},
+        "results": results,
+    }
+
+
 def _preview_fact_rows(facts: list[CurrentStateFact], *, namespace: str) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for index, fact in enumerate(facts, start=1):
@@ -785,16 +817,24 @@ def run_benchmark_state_trial(
         extractor_version=extractor_version,
     )
     baseline_by_question = _baseline_map(baseline_results)
-    with _state_ingestion_env_for_benchmark():
-        staged = stage_state_event_proposals(
-            repo,
-            {"state_events": plan.state_events},
-            namespace=namespace,
+    if dry_run:
+        staged = _dry_run_stage_state_event_proposals(
+            plan.state_events,
             source_hash=source_hash,
             extractor_version=extractor_version,
         )
+    else:
+        with _state_ingestion_env_for_benchmark():
+            staged = stage_state_event_proposals(
+                repo,
+                {"state_events": plan.state_events},
+                namespace=namespace,
+                source_hash=source_hash,
+                extractor_version=extractor_version,
+            )
 
     writes_applied = int(staged.get("writes_applied") or 0)
+    staged_counts = staged.get("counts") or {}
     candidate_results = staged.get("results") or []
     previous_event_by_state_key: dict[str, str] = {}
     event_source_ids: dict[str, str] = {}
@@ -950,7 +990,8 @@ def run_benchmark_state_trial(
         "counts": {
             "state_events_planned": len(plan.state_events),
             "state_questions": len(plan.questions),
-            "candidates_staged": int((staged.get("counts") or {}).get("staged") or 0),
+            "candidates_staged": int(staged_counts.get("staged") or 0),
+            "candidates_would_stage": int(staged_counts.get("would_stage") or 0),
             "events_accepted": accepted_count,
             "events_would_accept": would_accept_count,
             "edges_inserted": edge_count,
@@ -1000,16 +1041,24 @@ def run_judged_bundle_state_trial(
         max_events_per_question=int(top_k) if str(event_granularity or "").strip().lower() == "memory" else 12,
         event_granularity=event_granularity,
     )
-    with _state_ingestion_env_for_benchmark():
-        staged = stage_state_event_proposals(
-            repo,
-            {"state_events": plan.state_events},
-            namespace=namespace,
+    if dry_run:
+        staged = _dry_run_stage_state_event_proposals(
+            plan.state_events,
             source_hash=source_hash,
             extractor_version=extractor_version,
         )
+    else:
+        with _state_ingestion_env_for_benchmark():
+            staged = stage_state_event_proposals(
+                repo,
+                {"state_events": plan.state_events},
+                namespace=namespace,
+                source_hash=source_hash,
+                extractor_version=extractor_version,
+            )
 
     writes_applied = int(staged.get("writes_applied") or 0)
+    staged_counts = staged.get("counts") or {}
     candidate_results = staged.get("results") or []
     previous_event_by_state_key: dict[str, str] = {}
     preview_events: list[StateEvent] = []
@@ -1259,7 +1308,8 @@ def run_judged_bundle_state_trial(
         "counts": {
             "state_events_planned": len(plan.state_events),
             "state_questions": len(plan.questions),
-            "candidates_staged": int((staged.get("counts") or {}).get("staged") or 0),
+            "candidates_staged": int(staged_counts.get("staged") or 0),
+            "candidates_would_stage": int(staged_counts.get("would_stage") or 0),
             "events_accepted": accepted_count,
             "events_would_accept": would_accept_count,
             "edges_inserted": edge_count,
@@ -1410,7 +1460,7 @@ def main() -> None:
     parser.add_argument("--conversations")
     parser.add_argument("--max-questions", type=int)
     parser.add_argument("--question-types")
-    parser.add_argument("--dry-run", action="store_true", help="Stage candidates and compute an in-memory projection without accepting events.")
+    parser.add_argument("--dry-run", action="store_true", help="Compute an in-memory projection without staging candidates or accepting events.")
     args = parser.parse_args()
     if args.private_bundle_path:
         report = run_private_bundle_state_trial(

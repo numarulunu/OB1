@@ -218,7 +218,10 @@ def test_run_benchmark_state_trial_dry_run_projects_without_accepting(monkeypatc
     assert repo.accepted == []
     assert repo.edges == []
     assert repo.rebuilt == []
-    assert report["writes_applied"] == 2
+    assert repo.staged == []
+    assert report["writes_applied"] == 0
+    assert report["counts"]["candidates_staged"] == 0
+    assert report["counts"]["candidates_would_stage"] == 2
     assert report["counts"]["events_accepted"] == 0
     assert report["counts"]["events_would_accept"] == 2
     assert report["counts"]["edges_inserted"] == 0
@@ -445,7 +448,10 @@ def test_run_judged_bundle_state_trial_dry_run_projects_without_accepting(monkey
     assert repo.accepted == []
     assert repo.edges == []
     assert repo.rebuilt == []
-    assert report["writes_applied"] == 2
+    assert repo.staged == []
+    assert report["writes_applied"] == 0
+    assert report["counts"]["candidates_staged"] == 0
+    assert report["counts"]["candidates_would_stage"] == 2
     assert report["counts"]["events_accepted"] == 0
     assert report["counts"]["events_would_accept"] == 2
     assert report["counts"]["edges_inserted"] == 0

@@ -2159,8 +2159,6 @@ def beam_candidate_marker_overlap(question: dict[str, Any], answer: str) -> tupl
 def beam_trusted_typed_projection_candidate_index(question: dict[str, Any], candidates: list[dict[str, str]]) -> int:
     if not is_beam_current_state_question(question):
         return 0
-    if str(question.get("category") or "").lower() != "preference_following":
-        return 0
     scored_typed: list[tuple[int, int, str, int]] = []
     for index, candidate in enumerate(candidates, start=1):
         if str(candidate.get("kind") or "") != "typed_projection":
@@ -4454,21 +4452,13 @@ def run_openai_compatible(
                         if candidate.get("kind") in {"version_constraint", "dependency_versions"} and str(candidate.get("answer") or "").strip():
                             forced_version_index = index
                             break
-                    trusted_typed_projection_index = 0
+                    trusted_typed_projection_index = beam_trusted_typed_projection_candidate_index(question, candidates)
                     if forced_ranked_index:
                         beam_answer_selector_result = {
                             "parser_status": "ranked_state_memory_direct_bypass",
                             "selected_id": f"candidate_{forced_ranked_index}",
                             "selected_index": forced_ranked_index,
                             "reason_code": "ranked_state_memory_direct_bypass",
-                            "confidence": 1.0,
-                        }
-                    elif forced_version_index:
-                        beam_answer_selector_result = {
-                            "parser_status": "version_constraint_direct_bypass",
-                            "selected_id": f"candidate_{forced_version_index}",
-                            "selected_index": forced_version_index,
-                            "reason_code": "version_constraint_direct_bypass",
                             "confidence": 1.0,
                         }
                     elif forced_information_index:
@@ -4485,6 +4475,14 @@ def run_openai_compatible(
                             "selected_id": f"candidate_{trusted_typed_projection_index}",
                             "selected_index": trusted_typed_projection_index,
                             "reason_code": "typed_projection_trusted_current_state",
+                            "confidence": 1.0,
+                        }
+                    elif forced_version_index:
+                        beam_answer_selector_result = {
+                            "parser_status": "version_constraint_direct_bypass",
+                            "selected_id": f"candidate_{forced_version_index}",
+                            "selected_index": forced_version_index,
+                            "reason_code": "version_constraint_direct_bypass",
                             "confidence": 1.0,
                         }
                     else:

@@ -4803,6 +4803,28 @@ def test_beam_trusted_typed_projection_candidate_index_accepts_strong_overlap_wi
     assert module.beam_trusted_typed_projection_candidate_index(question, candidates) == 2
 
 
+def test_beam_trusted_typed_projection_candidate_index_accepts_instruction_state():
+    module = load_module()
+    question = {
+        "category": "instruction_following",
+        "question": "Which project libraries should the implementation use?",
+    }
+    candidates = [
+        {
+            "id": "candidate_1",
+            "kind": "dependency_versions",
+            "answer": "Current project libraries/dependencies with exact versions: FastAPI v0.85; Redis v6.2.6.",
+        },
+        {
+            "id": "candidate_2",
+            "kind": "typed_projection",
+            "answer": "User: Use FastAPI v0.85 and Redis v6.2.6 for the project implementation.",
+        },
+    ]
+
+    assert module.beam_trusted_typed_projection_candidate_index(question, candidates) == 2
+
+
 def test_beam_trusted_typed_projection_candidate_index_ignores_verbose_competing_candidates():
     module = load_module()
     question = {
@@ -4952,17 +4974,126 @@ def test_beam_typed_projection_candidate_adds_selector_candidate_without_extra_a
     cutoff = result["questions"][0]["cutoff_results"]["20"]
     rendered = json.dumps(result)
 
-    assert len(calls) == 6
+    assert len(calls) == 5
     assert cutoff["beam_typed_projection_candidate"] is True
     assert cutoff["beam_typed_projection_candidate_used"] is True
     assert cutoff["beam_answer_candidate_count"] == 3
     assert cutoff["beam_answer_selected_candidate_index"] == 3
     assert cutoff["beam_answer_selected_candidate_kind"] == "typed_projection"
-    assert cutoff["beam_answer_selector_status"] == "ok"
+    assert cutoff["beam_answer_selector_status"] == "typed_projection_direct_bypass"
     assert cutoff["generated_answer_hash"] == module.stable_hash("User: I prefer the citadel staging interface.")
     assert "citadel staging interface" not in rendered
     assert "harbor interface" not in rendered
     assert "private low trust" not in rendered
+    assert_public_report_has_no_raw_payload(result)
+
+
+def test_beam_typed_projection_direct_bypass_preempts_dependency_versions(tmp_path):
+    module = load_module()
+    bundle_path = tmp_path / "beam-private.json"
+    bundle_path.write_text(
+        json.dumps(
+            {
+                "dataset": "beam_1M",
+                "run_id": "private-beam-slice",
+                "mode": "private-judged-input-bundle",
+                "runs_model_calls": False,
+                "contains_raw_benchmark_text": True,
+                "contains_live_user_memory": False,
+                "top_k_values": [20],
+                "questions": [
+                    {
+                        "question_id": "beam-q1",
+                        "category": "instruction_following",
+                        "question": "Which project libraries should the implementation use?",
+                        "ground_truth_answer": "Use FastAPI v0.85 and Redis v6.2.6.",
+                        "retrieved_memories_by_top_k": {
+                            "20": [
+                                {
+                                    "memory": (
+                                        "User: Use FastAPI v0.85 and Redis v6.2.6 for the project implementation. "
+                                        "Project dependencies: FastAPI v0.85, Redis v6.2.6."
+                                    )
+                                },
+                            ]
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls = []
+
+    def fake_post(payload, api_key, base_url):
+        calls.append(payload)
+        system_prompt = payload["messages"][0]["content"].lower()
+        user_prompt = payload["messages"][1]["content"]
+        assert "select the best beam candidate answer" not in system_prompt
+        if "resolve beam current state" in system_prompt:
+            return {
+                "text": json.dumps(
+                    {
+                        "active_state": "private dependency state",
+                        "direct_answer": "private dependency direct answer",
+                        "supporting_event_hashes": ["aaa111aaa111"],
+                    }
+                ),
+                "usage": {"prompt_tokens": 17, "completion_tokens": 6},
+            }
+        if "verify beam resolved state" in system_prompt:
+            return {
+                "text": json.dumps(
+                    {
+                        "verdict": "uncertain",
+                        "corrected_direct_answer": "",
+                        "supporting_event_hashes": ["aaa111aaa111"],
+                        "reason_code": "needs_evidence",
+                        "confidence": 0.47,
+                    }
+                ),
+                "usage": {"prompt_tokens": 13, "completion_tokens": 5},
+            }
+        if "strict benchmark judge" in system_prompt:
+            assert "FastAPI v0.85 and Redis v6.2.6" in user_prompt
+            return {"text": '{"correct": true, "score": 1.0}', "usage": {"prompt_tokens": 11, "completion_tokens": 3}}
+        if "BEAM resolved state:" in user_prompt:
+            return {"text": "stateful fallback answer", "usage": {"prompt_tokens": 9, "completion_tokens": 4}}
+        return {"text": "stateless fallback answer", "usage": {"prompt_tokens": 9, "completion_tokens": 4}}
+
+    result = module.run_openai_compatible(
+        module.load_bundle(bundle_path),
+        module.ExternalRunConfig(
+            approved=True,
+            max_cost_usd=1.0,
+            answerer_model="answer-model",
+            judge_model="judge-model",
+            api_key="test-key",
+            base_url="https://example.test/v1/chat/completions",
+            prices=module.PriceConfig(1, 1, 1, 1),
+            beam_state_reducer=True,
+            beam_direct_answer_bypass=True,
+            beam_state_ledger=True,
+            beam_state_verifier=True,
+            beam_verified_state_only=True,
+            beam_answer_candidate_selector=True,
+            beam_typed_projection_candidate=True,
+        ),
+        cutoffs="20",
+        http_post=fake_post,
+    )
+    cutoff = result["questions"][0]["cutoff_results"]["20"]
+    rendered = json.dumps(result)
+
+    assert len(calls) == 5
+    assert cutoff["beam_typed_projection_candidate_used"] is True
+    assert cutoff["beam_answer_selected_candidate_kind"] == "typed_projection"
+    assert cutoff["beam_answer_selector_status"] == "typed_projection_direct_bypass"
+    assert cutoff["generated_answer_hash"] == module.stable_hash(
+        "User: Use FastAPI v0.85 and Redis v6.2.6 for the project implementation."
+    )
+    assert "FastAPI v0.85" not in rendered
+    assert "private dependency" not in rendered
     assert_public_report_has_no_raw_payload(result)
 
 
@@ -5069,8 +5200,8 @@ def test_beam_typed_projection_candidate_does_not_add_provider_calls_against_fla
     assert len(on_calls) <= len(off_calls)
     assert on_cutoff["beam_answer_candidate_count"] == off_cutoff["beam_answer_candidate_count"] + 1
     assert on_cutoff["beam_typed_projection_candidate"] is True
-    assert on_cutoff["beam_typed_projection_candidate_used"] is False
-    assert on_cutoff["beam_answer_selector_status"] == "ok"
+    assert on_cutoff["beam_typed_projection_candidate_used"] is True
+    assert on_cutoff["beam_answer_selector_status"] == "typed_projection_direct_bypass"
     assert_public_report_has_no_raw_payload(on_result)
 
 
@@ -5300,7 +5431,7 @@ def test_beam_typed_projection_candidate_can_be_selected_after_all_other_candida
     assert cutoff["beam_answer_candidate_count"] == 6
     assert cutoff["beam_answer_selected_candidate_index"] == 6
     assert cutoff["beam_answer_selected_candidate_kind"] == "typed_projection"
-    assert cutoff["beam_answer_selector_status"] == "ok"
+    assert cutoff["beam_answer_selector_status"] == "typed_projection_direct_bypass"
     assert cutoff["generated_answer_hash"] == module.stable_hash("User: I prefer the citadel staging interface.")
     assert "citadel staging interface" not in rendered
     assert "private reducer direct answer" not in rendered
