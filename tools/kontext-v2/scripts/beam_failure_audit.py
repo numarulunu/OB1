@@ -225,12 +225,16 @@ def safe_candidate_summaries(result: dict[str, Any]) -> list[dict[str, Any]]:
     for row in rows:
         if not isinstance(row, dict):
             continue
+        raw_id = str(row.get("id") or "")
+        index_match = re.fullmatch(r"candidate_(\d+)", raw_id.strip())
         summary = {
-            "id": str(row.get("id") or "")[:40],
+            "id": raw_id[:40],
             "kind": str(row.get("kind") or "unknown")[:40],
             "answer_hash": str(row.get("answer_hash") or "")[:80],
             "answer_chars": safe_int(row.get("answer_chars")),
         }
+        if index_match:
+            summary["index"] = safe_int(index_match.group(1))
         for key in numeric_fields:
             if key in row:
                 value = row.get(key)
@@ -252,6 +256,8 @@ def selected_candidate_kind(result: dict[str, Any], summaries: list[dict[str, An
     selected_index = safe_int(result.get("beam_answer_selected_candidate_index"))
     if selected_index < 1 or selected_index > len(summaries):
         return "unknown"
+    for summary in summaries:
+        summary["selected"] = safe_int(summary.get("index")) == selected_index
     return str(summaries[selected_index - 1].get("kind") or "unknown")
 
 
@@ -490,6 +496,8 @@ def build_audit_report(
         failure_class = class_for_failure_v2(question, bundle_question, result, debug_record, cutoff)
         increment(failure_classes, failure_class)
         coverage = term_coverage(bundle_question, debug_record, cutoff)
+        candidate_summaries = safe_candidate_summaries(result)
+        selected_kind = selected_candidate_kind(result, candidate_summaries)
         increment(coverage_summary, str(coverage.get("coverage_class") or "no_ground_terms"))
         judge_count = int(result.get("judge_count") or 0)
         judge_pass_count = int(result.get("judge_pass_count") or 0)
@@ -510,9 +518,10 @@ def build_audit_report(
                 "judge_pass_count": judge_pass_count,
                 "term_coverage": coverage,
                 "selected_candidate_index": safe_int(result.get("beam_answer_selected_candidate_index")),
-                "selected_candidate_kind": selected_candidate_kind(result, safe_candidate_summaries(result)),
-                "candidate_summaries": safe_candidate_summaries(result),
+                "selected_candidate_kind": selected_kind,
+                "candidate_summaries": candidate_summaries,
                 "generated_answer_hash": str(result.get("generated_answer_hash") or "")[:80],
+                "beam_direct_span_candidate_fused": result.get("beam_direct_span_candidate_fused") is True,
                 "beam_state_verifier_status": str(result.get("beam_state_verifier_status") or "")[:80],
                 "beam_direct_answer_bypass_reason": str(result.get("beam_direct_answer_bypass_reason") or "")[:120],
                 "beam_state_resolver_status": str(result.get("beam_state_resolver_status") or "")[:80],

@@ -311,6 +311,7 @@ def test_beam_failure_audit_keeps_safe_candidate_and_resolver_diagnostics(tmp_pa
                         "supporting_event_hashes": ["hash-a", "hash-b"],
                         "beam_state_resolver_supporting_event_hashes": ["hash-a"],
                         "beam_state_verifier_supporting_event_hashes": ["hash-b"],
+                        "beam_direct_span_candidate_fused": True,
                         "judge_count": 3,
                         "judge_pass_count": 0,
                     }
@@ -325,6 +326,11 @@ def test_beam_failure_audit_keeps_safe_candidate_and_resolver_diagnostics(tmp_pa
     direct = row["candidate_summaries"][1]
 
     assert row["failure_class"] == "beam_direct_span_candidate_not_selected"
+    assert row["beam_direct_span_candidate_fused"] is True
+    assert row["candidate_summaries"][0]["index"] == 1
+    assert row["candidate_summaries"][0]["selected"] is True
+    assert direct["index"] == 2
+    assert direct["selected"] is False
     assert direct["kind"] == "direct_span"
     assert direct["specific_question_overlap_ratio"] == 1.0
     assert direct["ground_truth_overlap_terms"] == 3
