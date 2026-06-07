@@ -3512,7 +3512,7 @@ def test_beam_information_extraction_candidate_direct_bypasses_selector(tmp_path
     assert cutoff["beam_answer_selected_candidate_index"] == 2
     assert cutoff["beam_answer_selected_candidate_kind"] == "information_extraction"
     assert cutoff["beam_answer_selector_status"] == "information_extraction_direct_bypass"
-    assert cutoff["generated_answer_hash"] == module.stable_hash("Assistant: The staging token was citadel-42.")
+    assert cutoff["generated_answer_hash"] == module.stable_hash("The staging token was citadel-42.")
     assert "citadel-42" not in rendered
     assert "wrong token" not in rendered
     assert_public_report_has_no_raw_payload(result)
@@ -4801,7 +4801,7 @@ def test_beam_direct_span_candidate_yields_typed_projection_to_selector(tmp_path
     assert cutoff["beam_direct_span_candidate_used"] is True
     assert cutoff["beam_typed_projection_candidate_used"] is False
     assert cutoff["generated_answer_hash"] == module.stable_hash(
-        "User: The current launch codename for the billing dashboard is Harbor."
+        "The current launch codename for the billing dashboard is Harbor."
     )
     assert "Harbor" not in rendered
     assert "private resolved" not in rendered
@@ -4887,7 +4887,7 @@ def test_beam_direct_span_candidate_fuses_knowledge_update_model_answer(tmp_path
     cutoff = result["questions"][0]["cutoff_results"]["20"]
     fused = (
         "model answer\n"
-        "Current evidence: User: The current launch codename for the billing dashboard is Harbor."
+        "Current evidence: The current launch codename for the billing dashboard is Harbor."
     )
     rendered = json.dumps(result)
 
@@ -5339,7 +5339,7 @@ def test_beam_direct_span_candidate_prefers_specific_short_state_span():
 
     answer = module.beam_direct_span_candidate_answer(question, memories)
 
-    assert answer == "User: The current launch codename for the billing dashboard is Harbor."
+    assert answer == "The current launch codename for the billing dashboard is Harbor."
 
 
 def test_beam_version_constraint_candidate_preserves_current_library_choice():

@@ -1892,6 +1892,12 @@ def beam_direct_answer_span_candidates(
     terms = {term for term in beam_question_terms(question) if term and term not in BEAM_GENERIC_TERMS}
     candidates: list[dict[str, Any]] = []
 
+    def clean_answer_span(value: str) -> str:
+        answer = str(value or "").strip()
+        if category.lower() in {"knowledge_update", "information_extraction"}:
+            return re.sub(r"^(?:User|Assistant)\s*:\s*", "", answer, flags=re.IGNORECASE)
+        return answer
+
     def add_candidate(role: str, value: str) -> None:
         span = re.sub(r"\s+", " ", str(value or "").strip())
         if not span:
@@ -1906,6 +1912,9 @@ def beam_direct_answer_span_candidates(
         if not span:
             return
         answer = f"{role_prefix}: {span}" if role_prefix else span
+        answer = clean_answer_span(answer)
+        if not answer:
+            return
         lowered = answer.lower()
         overlap = sum(1 for term in terms if term in lowered)
         marker = beam_state_marker_present(category, answer)
