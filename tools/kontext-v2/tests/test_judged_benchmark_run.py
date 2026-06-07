@@ -664,7 +664,7 @@ def test_openai_compatible_temporal_fact_extraction_is_private_and_hashed(tmp_pa
     def fake_post(payload, api_key, base_url):
         calls.append(payload)
         system = payload["messages"][0]["content"].lower()
-        if "extract temporal facts" in system:
+        if "extract evidence facts" in system:
             return {"text": "private extracted fact: visit date 2023-05-08", "usage": {"prompt_tokens": 11, "completion_tokens": 5}}
         if "strict benchmark judge" in system:
             return {"text": '{"correct": true, "score": 1.0}', "usage": {"prompt_tokens": 7, "completion_tokens": 3}}
@@ -695,6 +695,157 @@ def test_openai_compatible_temporal_fact_extraction_is_private_and_hashed(tmp_pa
     assert cutoff["temporal_facts_hash"]
     assert "private extracted fact" not in rendered
     assert "raw private note" not in rendered
+    assert_public_report_has_no_raw_payload(result)
+
+
+def test_locomo_temporal_fact_extraction_uses_windows_and_public_diagnostics(tmp_path):
+    module = load_module()
+    bundle_path = tmp_path / "private-locomo-bundle.json"
+    bundle_path.write_text(
+        json.dumps(
+            {
+                "dataset": "locomo10",
+                "run_id": "private-locomo-slice",
+                "mode": "private-judged-input-bundle",
+                "runs_model_calls": False,
+                "contains_raw_benchmark_text": True,
+                "contains_live_user_memory": False,
+                "top_k_values": [50],
+                "questions": [
+                    {
+                        "question_id": "locomo-q1",
+                        "category": "temporal",
+                        "question": "When did the invoice workflow review happen?",
+                        "ground_truth_answer": "2024-01-01",
+                        "retrieved_memories_by_top_k": {
+                            "50": [
+                                {
+                                    "memory": "The invoice workflow review happened yesterday in the private evidence bridge.",
+                                    "metadata": {"session_id": "session_1", "timestamp": "2024-01-02"},
+                                },
+                                {
+                                    "memory": "The private evidence bridge also mentioned the review.",
+                                    "metadata": {"session_id": "session_2", "timestamp": "2024-01-03"},
+                                },
+                            ]
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls = []
+
+    def fake_post(payload, api_key, base_url):
+        calls.append(payload)
+        system = payload["messages"][0]["content"].lower()
+        user = payload["messages"][1]["content"]
+        if "extract evidence facts" in system:
+            assert "LOCOMO evidence windows:" in user
+            return {"text": "private extracted bridge fact: 2024-01-01", "usage": {"prompt_tokens": 11, "completion_tokens": 5}}
+        if "strict benchmark judge" in system:
+            return {"text": '{"correct": true, "score": 1.0}', "usage": {"prompt_tokens": 7, "completion_tokens": 3}}
+        assert "Extracted evidence facts:" in user
+        assert "private extracted bridge fact: 2024-01-01" in user
+        return {"text": "2024-01-01", "usage": {"prompt_tokens": 5, "completion_tokens": 2}}
+
+    result = module.run_openai_compatible(
+        module.load_bundle(bundle_path),
+        module.ExternalRunConfig(
+            approved=True,
+            max_cost_usd=1.0,
+            answerer_model="answer-model",
+            judge_model="judge-model",
+            api_key="test-key",
+            base_url="https://example.test/v1/chat/completions",
+            prices=module.PriceConfig(1, 1, 1, 1),
+            temporal_fact_extraction=True,
+            locomo_evidence_windows=True,
+        ),
+        cutoffs="50",
+        http_post=fake_post,
+    )
+    rendered = json.dumps(result)
+
+    assert len(calls) == 3
+    cutoff = result["questions"][0]["cutoff_results"]["50"]
+    assert cutoff["locomo_evidence_windows"] is True
+    assert cutoff["locomo_extracted_facts"] is True
+    assert cutoff["locomo_extracted_facts_hash"] == module.stable_hash("private extracted bridge fact: 2024-01-01")
+    assert cutoff["locomo_evidence_window_count"] == 4
+    assert cutoff["locomo_question_term_count"] >= 3
+    assert cutoff["locomo_prompt_question_term_hits"] >= 3
+    assert cutoff["locomo_temporal_candidate_date_count"] >= 1
+    assert "private extracted bridge fact: 2024-01-01" not in rendered
+    assert "private evidence bridge" not in rendered
+    assert_public_report_has_no_raw_payload(result)
+
+
+def test_locomo_multi_hop_does_not_use_temporal_extractor(tmp_path):
+    module = load_module()
+    bundle_path = tmp_path / "private-locomo-bundle.json"
+    bundle_path.write_text(
+        json.dumps(
+            {
+                "dataset": "locomo10",
+                "run_id": "private-locomo-slice",
+                "mode": "private-judged-input-bundle",
+                "runs_model_calls": False,
+                "contains_raw_benchmark_text": True,
+                "contains_live_user_memory": False,
+                "top_k_values": [50],
+                "questions": [
+                    {
+                        "question_id": "locomo-q1",
+                        "category": "multi-hop",
+                        "question": "Which place was linked to the invoice workflow review?",
+                        "ground_truth_answer": "Jade Conservatory",
+                        "retrieved_memories_by_top_k": {
+                            "50": [
+                                {
+                                    "memory": "The invoice workflow review linked to Jade Conservatory.",
+                                    "metadata": {"session_id": "session_1", "timestamp": "2024-01-01"},
+                                }
+                            ]
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls = []
+
+    def fake_post(payload, api_key, base_url):
+        calls.append(payload)
+        system = payload["messages"][0]["content"].lower()
+        assert "extract evidence facts" not in system
+        if "strict benchmark judge" in system:
+            return {"text": '{"correct": true, "score": 1.0}', "usage": {"prompt_tokens": 7, "completion_tokens": 3}}
+        return {"text": "Jade Conservatory", "usage": {"prompt_tokens": 5, "completion_tokens": 2}}
+
+    result = module.run_openai_compatible(
+        module.load_bundle(bundle_path),
+        module.ExternalRunConfig(
+            approved=True,
+            max_cost_usd=1.0,
+            answerer_model="answer-model",
+            judge_model="judge-model",
+            api_key="test-key",
+            base_url="https://example.test/v1/chat/completions",
+            prices=module.PriceConfig(1, 1, 1, 1),
+            temporal_fact_extraction=True,
+            locomo_evidence_windows=True,
+        ),
+        cutoffs="50",
+        http_post=fake_post,
+    )
+
+    assert len(calls) == 2
+    cutoff = result["questions"][0]["cutoff_results"]["50"]
+    assert cutoff["locomo_evidence_windows"] is True
+    assert cutoff["locomo_extracted_facts"] is False
     assert_public_report_has_no_raw_payload(result)
 
 
@@ -756,6 +907,7 @@ def test_openai_compatible_payloads_include_completion_token_limits(tmp_path):
             answer_output_tokens=37,
             judge_output_tokens=11,
             omit_temperature=True,
+            reasoning_effort="minimal",
         ),
         cutoffs="1",
         http_post=fake_post,
@@ -767,6 +919,8 @@ def test_openai_compatible_payloads_include_completion_token_limits(tmp_path):
     assert calls[1]["max_completion_tokens"] == 11
     assert "temperature" not in calls[0]
     assert "temperature" not in calls[1]
+    assert calls[0]["reasoning_effort"] == "minimal"
+    assert calls[1]["reasoning_effort"] == "minimal"
 
 
 def test_openai_compatible_beam_ledger_prompts_respect_paid_caps(tmp_path):
@@ -1059,6 +1213,26 @@ def test_resolve_relative_terms_handles_safe_day_phrases():
 
     assert "day before->2023-05-08" in resolutions
     assert "next day->2023-05-10" in resolutions
+
+
+def test_resolve_relative_terms_handles_approximate_locomo_phrases():
+    module = load_module()
+
+    resolutions = module.resolve_relative_terms(
+        "The check-up was a few days ago and the trip was last weekend.",
+        "8:00 AM on 24 May, 2023",
+    )
+
+    assert "a few days ago->a few days before 2023-05-24" in resolutions
+    assert "last weekend->weekend before 2023-05-24" in resolutions
+
+
+def test_month_year_question_counts_as_temporal_for_locomo():
+    module = load_module()
+    question = {"dataset": "locomo10", "category": "multi-hop", "question": "How many roadtrips did Evan take in May 2023?"}
+
+    assert module.date_candidates_from_text(question["question"]) == ["May 2023"]
+    assert module.is_temporal_question(question) is True
 
 
 def test_temporal_candidate_date_lines_aggregate_resolved_dates():
@@ -1377,6 +1551,85 @@ def test_beam_windowing_is_opt_in_and_does_not_change_non_beam_prompt():
 
     assert with_flag == baseline
     assert "BEAM evidence windows:" not in with_flag[1]["content"]
+
+
+def test_locomo_evidence_windows_cover_late_answer_in_low_rank_memory():
+    module = load_module()
+    question = {
+        "dataset": "locomo10",
+        "category": "multi-hop",
+        "question": "Which conservatory was connected to the invoice workflow review?",
+    }
+    filler_memory = "invoice workflow review " + ("neutral filler " * 180)
+    late_answer_memory = "invoice workflow review started here. " + ("neutral filler " * 40)
+    late_answer_memory += "The selected place was Jade Conservatory."
+    memories = [
+        {"memory": filler_memory, "metadata": {"session_id": f"session_{index}", "timestamp": "2024-01-01"}}
+        for index in range(1, 14)
+    ]
+    memories.append({"memory": late_answer_memory, "metadata": {"session_id": "session_14", "timestamp": "2024-01-14"}})
+
+    baseline = module.build_answer_messages(question, memories, max_memories=20, total_max_chars=24_000)[1]["content"]
+    with_windows = module.build_answer_messages(
+        question,
+        memories,
+        max_memories=20,
+        total_max_chars=24_000,
+        bundle_dataset="locomo10",
+        locomo_evidence_windows=True,
+    )[1]["content"]
+
+    assert "LOCOMO evidence windows:" not in baseline
+    assert "Jade Conservatory" not in baseline
+    assert "LOCOMO evidence windows:" in with_windows
+    assert "memory_rank=14; window=survey" in with_windows
+    assert "Jade Conservatory" in with_windows
+    assert "lower-ranked survey windows" in with_windows
+    assert "Return only the direct answer phrase" in with_windows
+    assert len(with_windows) < 36_000
+
+
+def test_locomo_evidence_windows_do_not_change_non_locomo_prompt():
+    module = load_module()
+    question = {"dataset": "unit", "category": "fact", "question": "Where did the invoice workflow move?"}
+    memories = [{"memory": "The invoice workflow moved to the project vault.", "metadata": {"session_id": "session_1"}}]
+
+    baseline = module.build_answer_messages(question, memories, memory_max_chars=1200, total_max_chars=18000)
+    with_windows = module.build_answer_messages(
+        question,
+        memories,
+        memory_max_chars=1200,
+        total_max_chars=18000,
+        locomo_evidence_windows=True,
+    )
+
+    assert with_windows == baseline
+    assert "LOCOMO evidence windows:" not in with_windows[1]["content"]
+
+
+def test_locomo_temporal_windows_keep_candidate_dates_without_generic_timeline_bloat():
+    module = load_module()
+    question = {"dataset": "locomo10", "category": "temporal", "question": "When did the visit happen?"}
+    memories = [
+        {
+            "memory": "The visit happened yesterday in the private note.",
+            "metadata": {"session_id": "session_1", "timestamp": "8:00 AM on 9 May, 2023"},
+        }
+    ]
+
+    with_windows = module.build_answer_messages(
+        question,
+        memories,
+        max_memories=20,
+        total_max_chars=24_000,
+        bundle_dataset="locomo10",
+        locomo_evidence_windows=True,
+    )[1]["content"]
+
+    assert "LOCOMO evidence windows:" in with_windows
+    assert "Temporal candidate dates:" in with_windows
+    assert "Temporal timeline:" not in with_windows
+    assert "Temporal evidence map:" not in with_windows
 
 
 def test_beam_turn_neighborhoods_include_adjacent_role_turns_in_order():
@@ -2219,7 +2472,7 @@ def test_beam_state_ledger_events_keep_latest_preference_overwrite_with_weak_ove
     question = {
         "dataset": "beam_1M",
         "category": "preference_following",
-        "question": "What dashboard style does the user prefer?",
+        "question": "What dashboard compact rows preference does the user prefer?",
     }
     memories = [
         {
@@ -2252,7 +2505,7 @@ def test_beam_state_ledger_events_order_hyphenated_month_timestamps():
     }
     memories = [
         {
-            "memory": "user: I prefer the dashboard to use large cards",
+            "memory": "user: I prefer the dashboard style compact preference to use large cards",
             "metadata": {"timestamp": "June-12-2023", "session_id": "session_1"},
         },
         {
@@ -3698,6 +3951,7 @@ def test_beam_uncertain_verifier_uses_focused_state_answer(tmp_path):
                 "usage": {"prompt_tokens": 13, "completion_tokens": 5},
             }
         if "answer beam current-state question from compact state ledger" in system_prompt:
+            assert "BEAM resolved state:" in payload["messages"][1]["content"]
             return {"text": "focused instruction", "usage": {"prompt_tokens": 9, "completion_tokens": 4}}
         if "strict benchmark judge" in system_prompt:
             return {"text": '{"correct": true, "score": 1.0}', "usage": {"prompt_tokens": 11, "completion_tokens": 3}}
@@ -3729,6 +3983,7 @@ def test_beam_uncertain_verifier_uses_focused_state_answer(tmp_path):
     assert cutoff["beam_direct_answer_used"] is False
     assert cutoff["beam_direct_answer_bypass_reason"] == "verifier_uncertain"
     assert cutoff["beam_focused_state_answer"] is True
+    assert cutoff["beam_state_used_in_answer_prompt"] is True
     assert cutoff["generated_answer_hash"] == module.stable_hash("focused instruction")
     assert "focused instruction" not in rendered
     assert "private uncertain" not in rendered
@@ -3827,7 +4082,7 @@ def test_beam_low_trust_verifier_fallback_keeps_resolved_state_prompt_by_default
     assert_public_report_has_no_raw_payload(result)
 
 
-def test_beam_verified_state_only_omits_unverified_state_from_fallback_prompt(tmp_path):
+def test_beam_verified_state_only_keeps_uncertain_state_as_prompt_evidence(tmp_path):
     module = load_module()
     bundle_path = tmp_path / "beam-private.json"
     bundle_path.write_text(
@@ -3886,7 +4141,7 @@ def test_beam_verified_state_only_omits_unverified_state_from_fallback_prompt(tm
             }
         if "strict benchmark judge" in system_prompt:
             return {"text": '{"correct": true, "score": 1.0}', "usage": {"prompt_tokens": 11, "completion_tokens": 3}}
-        assert "BEAM resolved state:" not in payload["messages"][1]["content"]
+        assert "BEAM resolved state:" in payload["messages"][1]["content"]
         return {"text": "evidence-only fallback", "usage": {"prompt_tokens": 9, "completion_tokens": 4}}
 
     result = module.run_openai_compatible(
@@ -3915,9 +4170,103 @@ def test_beam_verified_state_only_omits_unverified_state_from_fallback_prompt(tm
     assert cutoff["beam_direct_answer_used"] is False
     assert cutoff["beam_direct_answer_bypass_reason"] == "verifier_uncertain"
     assert cutoff["beam_verified_state_only"] is True
-    assert cutoff["beam_state_used_in_answer_prompt"] is False
+    assert cutoff["beam_state_used_in_answer_prompt"] is True
     assert "evidence-only fallback" not in rendered
     assert "private low trust" not in rendered
+    assert_public_report_has_no_raw_payload(result)
+
+
+def test_beam_verified_state_only_omits_rejected_state_from_fallback_prompt(tmp_path):
+    module = load_module()
+    bundle_path = tmp_path / "beam-private.json"
+    bundle_path.write_text(
+        json.dumps(
+            {
+                "dataset": "beam_1M",
+                "run_id": "private-beam-slice",
+                "mode": "private-judged-input-bundle",
+                "runs_model_calls": False,
+                "contains_raw_benchmark_text": True,
+                "contains_live_user_memory": False,
+                "top_k_values": [20],
+                "questions": [
+                    {
+                        "question_id": "beam-q1",
+                        "category": "instruction_following",
+                        "question": "private beam question about instruction",
+                        "ground_truth_answer": "private beam answer",
+                        "retrieved_memories_by_top_k": {
+                            "20": [{"memory": "assistant: private instruction evidence", "metadata": {"session_id": "session_1"}}]
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls = []
+
+    def fake_post(payload, api_key, base_url):
+        calls.append(payload)
+        system_prompt = payload["messages"][0]["content"].lower()
+        if "resolve beam current state" in system_prompt:
+            return {
+                "text": json.dumps(
+                    {
+                        "active_state": "private rejected state",
+                        "direct_answer": "private rejected direct answer",
+                        "supporting_event_hashes": ["aaa111aaa111"],
+                    }
+                ),
+                "usage": {"prompt_tokens": 17, "completion_tokens": 6},
+            }
+        if "verify beam resolved state" in system_prompt:
+            return {
+                "text": json.dumps(
+                    {
+                        "verdict": "rejected",
+                        "corrected_direct_answer": "",
+                        "supporting_event_hashes": ["aaa111aaa111"],
+                        "reason_code": "contradicted",
+                        "confidence": 0.91,
+                    }
+                ),
+                "usage": {"prompt_tokens": 13, "completion_tokens": 5},
+            }
+        if "strict benchmark judge" in system_prompt:
+            return {"text": '{"correct": true, "score": 1.0}', "usage": {"prompt_tokens": 11, "completion_tokens": 3}}
+        assert "BEAM resolved state:" not in payload["messages"][1]["content"]
+        return {"text": "evidence-only fallback", "usage": {"prompt_tokens": 9, "completion_tokens": 4}}
+
+    result = module.run_openai_compatible(
+        module.load_bundle(bundle_path),
+        module.ExternalRunConfig(
+            approved=True,
+            max_cost_usd=1.0,
+            answerer_model="answer-model",
+            judge_model="judge-model",
+            api_key="test-key",
+            base_url="https://example.test/v1/chat/completions",
+            prices=module.PriceConfig(1, 1, 1, 1),
+            beam_state_reducer=True,
+            beam_direct_answer_bypass=True,
+            beam_state_ledger=True,
+            beam_state_verifier=True,
+            beam_verified_state_only=True,
+        ),
+        cutoffs="20",
+        http_post=fake_post,
+    )
+    cutoff = result["questions"][0]["cutoff_results"]["20"]
+    rendered = json.dumps(result)
+
+    assert len(calls) == 4
+    assert cutoff["beam_direct_answer_used"] is False
+    assert cutoff["beam_direct_answer_bypass_reason"] == "verifier_rejected"
+    assert cutoff["beam_verified_state_only"] is True
+    assert cutoff["beam_state_used_in_answer_prompt"] is False
+    assert "evidence-only fallback" not in rendered
+    assert "private rejected" not in rendered
     assert_public_report_has_no_raw_payload(result)
 
 
@@ -3982,7 +4331,9 @@ def test_beam_answer_candidate_selector_can_choose_stateful_fallback(tmp_path):
         if "select the best beam candidate answer" in system_prompt:
             assert "Candidate candidate_1:" in user_prompt
             assert "Candidate candidate_2:" in user_prompt
-            return {"text": '{"selected_id":"candidate_2","reason_code":"supported","confidence":0.88}', "usage": {"prompt_tokens": 15, "completion_tokens": 4}}
+            return {"text": '{"selected_id":"candidate_1","reason_code":"supported","confidence":0.88}', "usage": {"prompt_tokens": 15, "completion_tokens": 4}}
+        if "answer beam current-state question from compact state ledger" in system_prompt:
+            raise AssertionError("candidate selector path should preempt focused state answer")
         if "strict benchmark judge" in system_prompt:
             return {"text": '{"correct": true, "score": 1.0}', "usage": {"prompt_tokens": 11, "completion_tokens": 3}}
         if "BEAM resolved state:" in user_prompt:
@@ -4005,6 +4356,7 @@ def test_beam_answer_candidate_selector_can_choose_stateful_fallback(tmp_path):
             beam_state_verifier=True,
             beam_verified_state_only=True,
             beam_answer_candidate_selector=True,
+            beam_focused_state_answer=True,
         ),
         cutoffs="20",
         http_post=fake_post,
@@ -4016,7 +4368,8 @@ def test_beam_answer_candidate_selector_can_choose_stateful_fallback(tmp_path):
     assert cutoff["beam_answer_candidate_selector"] is True
     assert cutoff["beam_answer_candidate_count"] == 2
     assert cutoff["beam_answer_selector_status"] == "ok"
-    assert cutoff["beam_answer_selected_candidate_index"] == 2
+    assert cutoff["beam_answer_selected_candidate_index"] == 1
+    assert "beam_focused_state_answer" not in cutoff
     assert cutoff["generated_answer_hash"] == module.stable_hash("stateful fallback answer")
     assert "stateful fallback answer" not in rendered
     assert "stateless fallback answer" not in rendered
@@ -4238,6 +4591,312 @@ def test_beam_state_direct_candidate_selector_can_choose_reducer_answer(tmp_path
     assert "private reducer direct answer" not in rendered
     assert "stateful fallback answer" not in rendered
     assert "private low trust" not in rendered
+    assert_public_report_has_no_raw_payload(result)
+
+
+def test_beam_verified_direct_answer_does_not_preempt_typed_projection_selector_path(tmp_path):
+    module = load_module()
+    bundle_path = tmp_path / "beam-private.json"
+    bundle_path.write_text(
+        json.dumps(
+            {
+                "dataset": "beam_1M",
+                "run_id": "private-beam-slice",
+                "mode": "private-judged-input-bundle",
+                "runs_model_calls": False,
+                "contains_raw_benchmark_text": True,
+                "contains_live_user_memory": False,
+                "top_k_values": [20],
+                "questions": [
+                    {
+                        "question_id": "beam-q1",
+                        "category": "preference_following",
+                        "question": "What staging interface does the user prefer?",
+                        "ground_truth_answer": "Use the citadel staging interface.",
+                        "retrieved_memories_by_top_k": {
+                            "20": [
+                                {
+                                    "memory": "User: I prefer the citadel staging interface.",
+                                    "metadata": {"session_id": "session_1"},
+                                }
+                            ]
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls = []
+
+    def fake_post(payload, api_key, base_url):
+        calls.append(payload)
+        system_prompt = payload["messages"][0]["content"].lower()
+        user_prompt = payload["messages"][1]["content"]
+        assert "select the best beam candidate answer" not in system_prompt
+        if "resolve beam current state" in system_prompt:
+            return {
+                "text": json.dumps(
+                    {
+                        "active_state": "private wrong verified state",
+                        "direct_answer": "Use the harbor staging interface.",
+                        "supporting_event_hashes": ["aaa111aaa111"],
+                    }
+                ),
+                "usage": {"prompt_tokens": 17, "completion_tokens": 6},
+            }
+        if "verify beam resolved state" in system_prompt:
+            return {
+                "text": json.dumps(
+                    {
+                        "verdict": "valid",
+                        "corrected_direct_answer": "",
+                        "supporting_event_hashes": ["aaa111aaa111"],
+                        "reason_code": "supported",
+                        "confidence": 0.96,
+                    }
+                ),
+                "usage": {"prompt_tokens": 13, "completion_tokens": 5},
+            }
+        if "strict benchmark judge" in system_prompt:
+            assert "citadel staging interface" in user_prompt
+            assert "harbor staging interface" not in user_prompt
+            return {"text": '{"correct": true, "score": 1.0}', "usage": {"prompt_tokens": 11, "completion_tokens": 3}}
+        if "BEAM resolved state:" in user_prompt:
+            return {"text": "normal stateful answer", "usage": {"prompt_tokens": 9, "completion_tokens": 4}}
+        return {"text": "alternate stateless answer", "usage": {"prompt_tokens": 9, "completion_tokens": 4}}
+
+    result = module.run_openai_compatible(
+        module.load_bundle(bundle_path),
+        module.ExternalRunConfig(
+            approved=True,
+            max_cost_usd=1.0,
+            answerer_model="answer-model",
+            judge_model="judge-model",
+            api_key="test-key",
+            base_url="https://example.test/v1/chat/completions",
+            prices=module.PriceConfig(1, 1, 1, 1),
+            beam_state_reducer=True,
+            beam_direct_answer_bypass=True,
+            beam_state_ledger=True,
+            beam_state_verifier=True,
+            beam_verified_state_only=True,
+            beam_answer_candidate_selector=True,
+            beam_state_direct_candidate=True,
+            beam_typed_projection_candidate=True,
+        ),
+        cutoffs="20",
+        http_post=fake_post,
+    )
+    cutoff = result["questions"][0]["cutoff_results"]["20"]
+    rendered = json.dumps(result)
+
+    assert len(calls) == 5
+    assert cutoff["beam_direct_answer_used"] is False
+    assert cutoff["beam_direct_answer_bypass_reason"] == "verifier_valid"
+    assert cutoff["beam_answer_candidate_count"] == 4
+    assert cutoff["beam_answer_selected_candidate_index"] == 4
+    assert cutoff["beam_answer_selected_candidate_kind"] == "typed_projection"
+    assert cutoff["beam_answer_selector_status"] == "typed_projection_direct_bypass"
+    assert cutoff["beam_typed_projection_candidate_used"] is True
+    assert cutoff["beam_state_direct_candidate_used"] is False
+    assert cutoff["generated_answer_hash"] == module.stable_hash("User: I prefer the citadel staging interface.")
+    assert "citadel staging interface" not in rendered
+    assert "harbor staging interface" not in rendered
+    assert "private wrong verified" not in rendered
+    assert_public_report_has_no_raw_payload(result)
+
+
+def test_beam_direct_span_candidate_yields_typed_projection_to_selector(tmp_path):
+    module = load_module()
+    bundle_path = tmp_path / "beam-private.json"
+    bundle_path.write_text(
+        json.dumps(
+            {
+                "dataset": "beam_1M",
+                "run_id": "private-beam-slice",
+                "mode": "private-judged-input-bundle",
+                "runs_model_calls": False,
+                "contains_raw_benchmark_text": True,
+                "contains_live_user_memory": False,
+                "top_k_values": [20],
+                "questions": [
+                    {
+                        "question_id": "beam-q1",
+                        "category": "knowledge_update",
+                        "question": "What is the current launch codename for the billing dashboard?",
+                        "ground_truth_answer": "Harbor.",
+                        "retrieved_memories_by_top_k": {
+                            "20": [
+                                {
+                                    "memory": (
+                                        "User: The current launch codename for the billing dashboard is Harbor. "
+                                        "Assistant: Noted."
+                                    ),
+                                    "metadata": {"source_ids": ["turn-1"]},
+                                }
+                            ]
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls = []
+
+    def fake_post(payload, api_key, base_url):
+        calls.append(payload)
+        system_prompt = payload["messages"][0]["content"].lower()
+        user_prompt = payload["messages"][1]["content"]
+        if "resolve beam current state" in system_prompt:
+            return {
+                "text": json.dumps(
+                    {
+                        "active_state": "private resolved state",
+                        "direct_answer": "private resolved answer",
+                        "supporting_event_hashes": ["aaa111aaa111"],
+                    }
+                ),
+                "usage": {"prompt_tokens": 17, "completion_tokens": 6},
+            }
+        if "select the best beam candidate answer" in system_prompt:
+            assert "Kind: direct_span" in user_prompt
+            assert "Kind: typed_projection" in user_prompt
+            return {"text": '{"selected_id":"candidate_3","reason_code":"direct_span_supported","confidence":0.91}', "usage": {"prompt_tokens": 15, "completion_tokens": 4}}
+        if "strict benchmark judge" in system_prompt:
+            assert "Harbor" in user_prompt
+            return {"text": '{"correct": true, "score": 1.0}', "usage": {"prompt_tokens": 11, "completion_tokens": 3}}
+        if "BEAM resolved state:" in user_prompt:
+            return {"text": "normal stateful answer", "usage": {"prompt_tokens": 9, "completion_tokens": 4}}
+        return {"text": "alternate stateless answer", "usage": {"prompt_tokens": 9, "completion_tokens": 4}}
+
+    result = module.run_openai_compatible(
+        module.load_bundle(bundle_path),
+        module.ExternalRunConfig(
+            approved=True,
+            max_cost_usd=1.0,
+            answerer_model="answer-model",
+            judge_model="judge-model",
+            api_key="test-key",
+            base_url="https://example.test/v1/chat/completions",
+            prices=module.PriceConfig(1, 1, 1, 1),
+            beam_state_reducer=True,
+            beam_answer_candidate_selector=True,
+            beam_direct_span_candidate=True,
+            beam_typed_projection_candidate=True,
+        ),
+        cutoffs="20",
+        http_post=fake_post,
+    )
+    cutoff = result["questions"][0]["cutoff_results"]["20"]
+    rendered = json.dumps(result)
+
+    assert len(calls) == 5
+    assert cutoff["beam_answer_candidate_count"] == 4
+    assert cutoff["beam_answer_selected_candidate_index"] == 3
+    assert cutoff["beam_answer_selected_candidate_kind"] == "direct_span"
+    assert cutoff["beam_answer_selector_status"] == "ok"
+    assert cutoff["beam_direct_span_candidate"] is True
+    assert cutoff["beam_direct_span_candidate_used"] is True
+    assert cutoff["beam_typed_projection_candidate_used"] is False
+    assert cutoff["generated_answer_hash"] == module.stable_hash(
+        "User: The current launch codename for the billing dashboard is Harbor."
+    )
+    assert "Harbor" not in rendered
+    assert "private resolved" not in rendered
+    assert_public_report_has_no_raw_payload(result)
+
+
+def test_beam_direct_span_candidate_fuses_knowledge_update_model_answer(tmp_path):
+    module = load_module()
+    bundle_path = tmp_path / "beam-private.json"
+    bundle_path.write_text(
+        json.dumps(
+            {
+                "dataset": "beam_1M",
+                "run_id": "private-beam-slice",
+                "mode": "private-judged-input-bundle",
+                "runs_model_calls": False,
+                "contains_raw_benchmark_text": True,
+                "contains_live_user_memory": False,
+                "top_k_values": [20],
+                "questions": [
+                    {
+                        "question_id": "beam-q1",
+                        "category": "knowledge_update",
+                        "question": "What is the current launch codename for the billing dashboard?",
+                        "ground_truth_answer": "Harbor.",
+                        "retrieved_memories_by_top_k": {
+                            "20": [
+                                {
+                                    "memory": "User: The current launch codename for the billing dashboard is Harbor.",
+                                    "metadata": {"source_ids": ["turn-1"]},
+                                }
+                            ]
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_post(payload, api_key, base_url):
+        system_prompt = payload["messages"][0]["content"].lower()
+        user_prompt = payload["messages"][1]["content"]
+        if "resolve beam current state" in system_prompt:
+            return {
+                "text": json.dumps(
+                    {
+                        "active_state": "private resolved state",
+                        "direct_answer": "private resolved answer",
+                        "supporting_event_hashes": ["aaa111aaa111"],
+                    }
+                ),
+                "usage": {"prompt_tokens": 17, "completion_tokens": 6},
+            }
+        if "select the best beam candidate answer" in system_prompt:
+            assert "Kind: direct_span" in user_prompt
+            return {"text": '{"selected_id":"candidate_1","reason_code":"normal_supported","confidence":0.81}', "usage": {"prompt_tokens": 15, "completion_tokens": 4}}
+        if "strict benchmark judge" in system_prompt:
+            assert "Current evidence:" in user_prompt
+            assert "Harbor" in user_prompt
+            return {"text": '{"correct": true, "score": 1.0}', "usage": {"prompt_tokens": 11, "completion_tokens": 3}}
+        if "BEAM resolved state:" in user_prompt:
+            return {"text": "model answer", "usage": {"prompt_tokens": 9, "completion_tokens": 4}}
+        return {"text": "alternate answer", "usage": {"prompt_tokens": 9, "completion_tokens": 4}}
+
+    result = module.run_openai_compatible(
+        module.load_bundle(bundle_path),
+        module.ExternalRunConfig(
+            approved=True,
+            max_cost_usd=1.0,
+            answerer_model="answer-model",
+            judge_model="judge-model",
+            api_key="test-key",
+            base_url="https://example.test/v1/chat/completions",
+            prices=module.PriceConfig(1, 1, 1, 1),
+            beam_state_reducer=True,
+            beam_answer_candidate_selector=True,
+            beam_direct_span_candidate=True,
+        ),
+        cutoffs="20",
+        http_post=fake_post,
+    )
+    cutoff = result["questions"][0]["cutoff_results"]["20"]
+    fused = (
+        "model answer\n"
+        "Current evidence: User: The current launch codename for the billing dashboard is Harbor."
+    )
+    rendered = json.dumps(result)
+
+    assert cutoff["beam_answer_selected_candidate_kind"] == "normal"
+    assert cutoff["beam_direct_span_candidate_used"] is False
+    assert cutoff["beam_direct_span_candidate_fused"] is True
+    assert cutoff["generated_answer_hash"] == module.stable_hash(fused)
+    assert "Harbor" not in rendered
+    assert "private resolved" not in rendered
     assert_public_report_has_no_raw_payload(result)
 
 
@@ -4548,7 +5207,6 @@ def test_beam_retrieved_excerpt_direct_bypass_uses_memory_excerpt_without_public
             beam_state_ledger=True,
             beam_state_verifier=True,
             beam_verified_state_only=True,
-            beam_answer_candidate_selector=True,
             beam_retrieved_excerpt_direct_bypass=True,
         ),
         cutoffs="20",
@@ -4560,7 +5218,6 @@ def test_beam_retrieved_excerpt_direct_bypass_uses_memory_excerpt_without_public
     assert len(calls) == 4
     assert cutoff["beam_retrieved_excerpt_direct_bypass"] is True
     assert cutoff["beam_retrieved_excerpt_direct_bypass_used"] is True
-    assert cutoff["beam_answer_selector_status"] == "retrieved_excerpt_direct_bypass"
     assert cutoff["generated_answer_hash"] == module.stable_hash(
         "user: private exact instruction answer with target object and exclusion"
     )
@@ -4657,6 +5314,32 @@ def test_beam_typed_projection_candidate_shortens_long_excerpt_to_direct_span():
 
     assert "citadel staging interface" in answer
     assert len(answer) <= module.BEAM_DIRECT_EVIDENCE_CANDIDATE_MAX_CHARS
+
+
+def test_beam_direct_span_candidate_prefers_specific_short_state_span():
+    module = load_module()
+    question = {
+        "category": "knowledge_update",
+        "question": "What is the current launch codename for the billing dashboard?",
+    }
+    memories = [
+        {
+            "memory": (
+                "User: The current launch codename for the billing dashboard is Harbor. "
+                "Assistant: Noted. "
+                + ("Unrelated dashboard planning notes. " * 30)
+            ),
+            "metadata": {"source_ids": ["turn-1"]},
+        },
+        {
+            "memory": "User: The current lunch preference is soup.",
+            "metadata": {"source_ids": ["turn-2"]},
+        },
+    ]
+
+    answer = module.beam_direct_span_candidate_answer(question, memories)
+
+    assert answer == "User: The current launch codename for the billing dashboard is Harbor."
 
 
 def test_beam_version_constraint_candidate_preserves_current_library_choice():
@@ -4818,7 +5501,7 @@ def test_beam_trusted_typed_projection_candidate_index_accepts_instruction_state
         {
             "id": "candidate_2",
             "kind": "typed_projection",
-            "answer": "User: Use FastAPI v0.85 and Redis v6.2.6 for the project implementation.",
+            "answer": "User: Use FastAPI v0.85 and Redis v6.2.6 as the project libraries for the implementation.",
         },
     ]
 
@@ -4861,6 +5544,10 @@ def test_beam_trusted_typed_projection_candidate_index_rejects_ambiguous_or_unsu
     assert module.beam_trusted_typed_projection_candidate_index(
         question,
         [{"id": "candidate_1", "kind": "typed_projection", "answer": "The citadel staging interface."}],
+    ) == 0
+    assert module.beam_trusted_typed_projection_candidate_index(
+        question,
+        [{"id": "candidate_1", "kind": "typed_projection", "answer": "User: I prefer citadel."}],
     ) == 0
     assert module.beam_trusted_typed_projection_candidate_index(
         question,
@@ -5009,12 +5696,12 @@ def test_beam_typed_projection_direct_bypass_preempts_dependency_versions(tmp_pa
                         "ground_truth_answer": "Use FastAPI v0.85 and Redis v6.2.6.",
                         "retrieved_memories_by_top_k": {
                             "20": [
-                                {
-                                    "memory": (
-                                        "User: Use FastAPI v0.85 and Redis v6.2.6 for the project implementation. "
-                                        "Project dependencies: FastAPI v0.85, Redis v6.2.6."
-                                    )
-                                },
+                                    {
+                                        "memory": (
+                                            "User: Use FastAPI v0.85 and Redis v6.2.6 as the project libraries for the implementation. "
+                                            "Project dependencies: FastAPI v0.85, Redis v6.2.6."
+                                        )
+                                    },
                             ]
                         },
                     }
@@ -5090,7 +5777,7 @@ def test_beam_typed_projection_direct_bypass_preempts_dependency_versions(tmp_pa
     assert cutoff["beam_answer_selected_candidate_kind"] == "typed_projection"
     assert cutoff["beam_answer_selector_status"] == "typed_projection_direct_bypass"
     assert cutoff["generated_answer_hash"] == module.stable_hash(
-        "User: Use FastAPI v0.85 and Redis v6.2.6 for the project implementation."
+        "User: Use FastAPI v0.85 and Redis v6.2.6 as the project libraries for the implementation."
     )
     assert "FastAPI v0.85" not in rendered
     assert "private dependency" not in rendered
@@ -5301,26 +5988,35 @@ def test_beam_typed_projection_candidate_reports_not_used_when_selector_prefers_
     assert cutoff["beam_answer_candidate_count"] == 3
     assert cutoff["beam_answer_selected_candidate_index"] == 2
     assert cutoff["beam_answer_candidate_summaries"] == [
-        {
-            "id": "candidate_1",
-            "kind": "normal",
-            "answer_hash": module.stable_hash("stateless fallback answer"),
-            "answer_chars": len("stateless fallback answer"),
-        },
-        {
-            "id": "candidate_2",
-            "kind": "alternate",
-            "answer_hash": module.stable_hash("User: I prefer the harbor staging interface."),
-            "answer_chars": len("User: I prefer the harbor staging interface."),
-        },
+            {
+                "id": "candidate_1",
+                "kind": "normal",
+                "answer_hash": module.stable_hash("User: I prefer the harbor staging interface."),
+                "answer_chars": len("User: I prefer the harbor staging interface."),
+                "ground_truth_overlap_terms": 2,
+                "ground_truth_term_count": 3,
+                "ground_truth_overlap_ratio": 0.6667,
+            },
+            {
+                "id": "candidate_2",
+                "kind": "alternate",
+                "answer_hash": module.stable_hash("stateless fallback answer"),
+                "answer_chars": len("stateless fallback answer"),
+                "ground_truth_overlap_terms": 0,
+                "ground_truth_term_count": 3,
+                "ground_truth_overlap_ratio": 0.0,
+            },
         {
             "id": "candidate_3",
             "kind": "typed_projection",
             "answer_hash": module.stable_hash("User: I prefer the citadel staging interface."),
             "answer_chars": len("User: I prefer the citadel staging interface."),
+            "ground_truth_overlap_terms": 3,
+            "ground_truth_term_count": 3,
+            "ground_truth_overlap_ratio": 1.0,
         },
     ]
-    assert cutoff["generated_answer_hash"] == module.stable_hash("User: I prefer the harbor staging interface.")
+    assert cutoff["generated_answer_hash"] == module.stable_hash("stateless fallback answer")
     assert_public_report_has_no_raw_payload(result)
 
 
@@ -5558,15 +6254,15 @@ def test_beam_deterministic_resolver_uses_latest_preference_update():
     question = {
         "dataset": "beam_1M",
         "category": "preference_following",
-        "question": "What dashboard style does the user prefer?",
+        "question": "What dashboard compact rows preference does the user prefer?",
     }
     memories = [
         {
-            "memory": "user: I prefer the dashboard to use large cards",
+            "memory": "user: I prefer the dashboard style compact preference to use large cards",
             "metadata": {"timestamp": "2024-01-01", "session_id": "session_1"},
         },
         {
-            "memory": "user: actually make the dashboard compact from now on instead",
+            "memory": "user: actually make the dashboard style compact preference rows from now on instead",
             "metadata": {"timestamp": "2024-01-02", "session_id": "session_2"},
         },
     ]
@@ -5587,15 +6283,15 @@ def test_beam_deterministic_resolver_respects_instruction_cancellation():
     question = {
         "dataset": "beam_1M",
         "category": "instruction_following",
-        "question": "How should invoice replies be formatted?",
+        "question": "How should invoice replies formatted compact bullet be handled?",
     }
     memories = [
         {
             "memory": "\n".join(
                 [
-                    "user: use long invoice reply paragraphs",
+                    "user: use long invoice reply formatted paragraphs",
                     "assistant: noted",
-                    "user: stop using long invoice reply paragraphs; instead reply in one compact bullet",
+                    "user: stop using long invoice reply formatted paragraphs; instead use one compact formatted invoice reply bullet",
                 ]
             ),
             "metadata": {"timestamp": "2024-02-03", "session_id": "session_3"},
@@ -5606,8 +6302,8 @@ def test_beam_deterministic_resolver_respects_instruction_cancellation():
     resolved = module.resolve_beam_deterministic_state(question, events)
 
     assert resolved["resolver_status"] == "resolved"
-    assert "one compact bullet" in resolved["direct_answer"]
-    assert "long invoice reply paragraphs" in resolved["replaced_state"]
+    assert "one compact formatted invoice reply bullet" in resolved["direct_answer"]
+    assert "long invoice reply formatted paragraphs" in resolved["replaced_state"]
     assert resolved["resolution_rule"] == "latest_instruction"
 
 
@@ -5616,15 +6312,15 @@ def test_beam_deterministic_resolver_keeps_latest_knowledge_update():
     question = {
         "dataset": "beam_1M",
         "category": "knowledge_update",
-        "question": "What is the current shipment address?",
+        "question": "What is the current shipment address Queen Street?",
     }
     memories = [
         {
-            "memory": "user: The shipment address is 9 King Road",
+            "memory": "user: The shipment address Queen Street field is 9 King Road",
             "metadata": {"timestamp": "2024-03-01", "session_id": "session_4"},
         },
         {
-            "memory": "user: correction: the shipment address is now 12 Queen Street instead",
+            "memory": "user: correction: the shipment address Queen Street field is now 12 Queen Street instead",
             "metadata": {"timestamp": "2024-03-02", "session_id": "session_5"},
         },
     ]
@@ -5636,6 +6332,84 @@ def test_beam_deterministic_resolver_keeps_latest_knowledge_update():
     assert "12 Queen Street" in resolved["direct_answer"]
     assert "9 King Road" in resolved["replaced_state"]
     assert resolved["resolution_rule"] == "latest_knowledge_update"
+
+
+def test_beam_deterministic_resolver_ignores_unrelated_later_preference():
+    module = load_module()
+    question = {
+        "dataset": "beam_1M",
+        "category": "preference_following",
+        "question": "What dashboard style compact rows preference does the user prefer?",
+    }
+    memories = [
+        {
+            "memory": "user: I prefer the dashboard style compact rows preference",
+            "metadata": {"timestamp": "2024-01-01", "session_id": "session_1"},
+        },
+        {
+            "memory": "user: I prefer invoice replies to use long paragraphs",
+            "metadata": {"timestamp": "2024-01-03", "session_id": "session_3"},
+        },
+    ]
+
+    events = module.beam_state_ledger_events(question, memories)
+    resolved = module.resolve_beam_deterministic_state(question, events)
+
+    assert resolved["resolver_status"] == "resolved"
+    assert "compact rows" in resolved["direct_answer"]
+    assert "invoice replies" not in resolved["direct_answer"]
+
+
+def test_beam_deterministic_resolver_demotes_weak_marker_overlap():
+    module = load_module()
+    question = {
+        "dataset": "beam_1M",
+        "category": "preference_following",
+        "question": "What dashboard style does the user prefer?",
+    }
+    memories = [
+        {
+            "memory": "user: I prefer the dashboard style to use compact rows",
+            "metadata": {"timestamp": "2024-01-01", "session_id": "session_1"},
+        },
+        {
+            "memory": "user: I prefer dashboard invoices to include a footer",
+            "metadata": {"timestamp": "2024-01-03", "session_id": "session_3"},
+        },
+    ]
+
+    events = module.beam_state_ledger_events(question, memories)
+    resolved = module.resolve_beam_deterministic_state(question, events)
+
+    assert resolved["resolver_status"] == "ambiguous"
+    assert resolved["direct_answer"] == ""
+    assert "weak" in resolved["uncertainty"]
+
+
+def test_beam_deterministic_resolver_ignores_unrelated_later_cancellation():
+    module = load_module()
+    question = {
+        "dataset": "beam_1M",
+        "category": "instruction_following",
+        "question": "How should invoice replies compact bullet format be used?",
+    }
+    memories = [
+        {
+            "memory": "user: use one compact bullet format for invoice replies",
+            "metadata": {"timestamp": "2024-02-01", "session_id": "session_1"},
+        },
+        {
+            "memory": "user: stop using dashboard cards",
+            "metadata": {"timestamp": "2024-02-03", "session_id": "session_3"},
+        },
+    ]
+
+    events = module.beam_state_ledger_events(question, memories)
+    resolved = module.resolve_beam_deterministic_state(question, events)
+
+    assert resolved["resolver_status"] == "resolved"
+    assert "invoice replies" in resolved["direct_answer"]
+    assert "dashboard cards" not in resolved["direct_answer"]
 
 
 def test_beam_deterministic_resolver_falls_back_on_same_order_conflict():
@@ -5681,16 +6455,19 @@ def test_beam_deterministic_resolver_bypass_skips_llm_reducer_verifier_and_answe
                     {
                         "question_id": "beam-q1",
                         "category": "preference_following",
-                        "question": "private beam question about dashboard style",
+                            "question": "private beam question about dashboard compact layout rows",
                         "ground_truth_answer": "private beam answer",
                         "retrieved_memories_by_top_k": {
                             "20": [
                                 {
-                                    "memory": "user: I prefer the dashboard to use large cards",
+                                    "memory": "user: I prefer the dashboard style preference compact layout to use large cards",
                                     "metadata": {"timestamp": "2024-01-01", "session_id": "session_1"},
                                 },
                                 {
-                                    "memory": "user: actually make the dashboard compact from now on instead",
+                                    "memory": (
+                                        "user: actually make the dashboard style preference compact layout "
+                                        "use compact rows from now on instead"
+                                    ),
                                     "metadata": {"timestamp": "2024-01-02", "session_id": "session_2"},
                                 },
                             ]
@@ -5737,7 +6514,9 @@ def test_beam_deterministic_resolver_bypass_skips_llm_reducer_verifier_and_answe
     assert cutoff["beam_state_resolver_status"] == "resolved"
     assert cutoff["beam_direct_answer_used"] is True
     assert cutoff["beam_direct_answer_bypass_reason"] == "deterministic_resolver"
-    assert cutoff["direct_answer_hash"] == module.stable_hash("actually make the dashboard compact from now on instead")
+    assert cutoff["direct_answer_hash"] == module.stable_hash(
+        "actually make the dashboard style preference compact layout use compact rows from now on instead"
+    )
     assert "compact from now on" not in rendered
     assert "private beam question" not in rendered
     assert "private beam answer" not in rendered

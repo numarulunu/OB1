@@ -62,6 +62,7 @@ def args(bundle_path: Path, **overrides):
         "mode": None,
         "judge_units_per_question": None,
         "temporal_fact_extraction": False,
+        "locomo_evidence_windows": False,
         "beam_evidence_windows": False,
         "beam_answer_contract": False,
         "beam_structured_evidence": False,
@@ -75,12 +76,14 @@ def args(bundle_path: Path, **overrides):
         "beam_verified_state_only": False,
         "beam_answer_candidate_selector": False,
         "beam_extractive_candidate": False,
+        "beam_direct_span_candidate": False,
         "beam_state_ledger": False,
         "beam_state_verifier": False,
         "beam_deterministic_state_resolver": False,
         "beam_focused_state_answer": False,
         "private_debug_output": None,
         "omit_temperature": False,
+        "reasoning_effort": None,
         "answer_max_memories": None,
         "answer_memory_max_chars": None,
         "answer_total_max_chars": None,
@@ -247,13 +250,17 @@ def test_packet_includes_temporal_extraction_flags_and_call_count(tmp_path):
         args(
             bundle,
             temporal_fact_extraction=True,
+            locomo_evidence_windows=True,
             omit_temperature=True,
+            reasoning_effort="minimal",
         )
     )
 
     assert packet["ok"] is True
     assert packet["temporal_fact_extraction"] is True
+    assert packet["locomo_evidence_windows"] is True
     assert packet["omit_temperature"] is True
+    assert packet["reasoning_effort"] == "minimal"
     assert packet["estimated_llm_calls"] == {
         "answer_calls": 2,
         "judge_calls": 1,
@@ -261,7 +268,9 @@ def test_packet_includes_temporal_extraction_flags_and_call_count(tmp_path):
         "total_calls": 3,
     }
     assert "--temporal-fact-extraction" in packet["command_template"]
+    assert "--locomo-evidence-windows" in packet["command_template"]
     assert "--omit-temperature" in packet["command_template"]
+    assert "--reasoning-effort minimal" in packet["command_template"]
 
 
 def test_packet_includes_answer_prompt_caps_without_raw_text(tmp_path):
@@ -1206,6 +1215,58 @@ def test_packet_includes_beam_typed_projection_candidate_without_extra_candidate
     assert "--beam-typed-projection-candidate" in packet["command_template"]
     assert packet["estimated_llm_calls"]["beam_answer_candidate_selector_calls"] == 1
     assert "beam_typed_projection_candidate_calls" not in packet["estimated_llm_calls"]
+    assert "private beam question" not in rendered
+    assert "private beam answer" not in rendered
+    assert "private beam memory" not in rendered
+
+
+def test_packet_includes_beam_direct_span_candidate_without_extra_candidate_call(tmp_path):
+    module = load_module()
+    bundle = tmp_path / "beam-private.json"
+    bundle.write_text(
+        json.dumps(
+            {
+                "dataset": "beam_1M",
+                "run_id": "private-beam-slice",
+                "mode": "private-judged-input-bundle",
+                "runs_model_calls": False,
+                "contains_raw_benchmark_text": True,
+                "contains_live_user_memory": False,
+                "top_k_values": [20],
+                "questions": [
+                    {
+                        "question_id": "beam-q1",
+                        "category": "knowledge_update",
+                        "question": "private beam question",
+                        "ground_truth_answer": "private beam answer",
+                        "retrieved_memories_by_top_k": {"20": [{"memory": "private beam memory"}]},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    packet = module.build_packet(
+        args(
+            bundle,
+            cutoffs="20",
+            max_questions=1,
+            beam_state_reducer=True,
+            beam_direct_answer_bypass=True,
+            beam_answer_candidate_selector=True,
+            beam_direct_span_candidate=True,
+        )
+    )
+    rendered = json.dumps(packet)
+
+    assert packet["ok"] is True
+    assert packet["beam_direct_span_candidate"] is True
+    assert "--beam-direct-span-candidate" in packet["command_template"]
+    assert packet["estimated_llm_calls"]["answer_calls"] == 4
+    assert "beam_direct_answer_bypass_skipped_answer_calls" not in packet["estimated_llm_calls"]
+    assert packet["estimated_llm_calls"]["beam_answer_candidate_selector_calls"] == 1
+    assert "beam_direct_span_candidate_calls" not in packet["estimated_llm_calls"]
     assert "private beam question" not in rendered
     assert "private beam answer" not in rendered
     assert "private beam memory" not in rendered

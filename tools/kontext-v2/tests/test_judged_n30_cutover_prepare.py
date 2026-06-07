@@ -42,6 +42,40 @@ def args(tmp_path: Path, **overrides):
         "answer_output_usd_per_1m": 0.40,
         "judge_input_usd_per_1m": 0.10,
         "judge_output_usd_per_1m": 0.40,
+        "answer_max_memories": None,
+        "answer_memory_max_chars": None,
+        "answer_total_max_chars": None,
+        "temporal_fact_extraction": False,
+        "locomo_evidence_windows": False,
+        "beam_evidence_windows": False,
+        "beam_answer_contract": False,
+        "beam_structured_evidence": False,
+        "beam_turn_neighborhoods": False,
+        "beam_category_synthesis": False,
+        "beam_state_reducer": False,
+        "beam_direct_answer_bypass": False,
+        "beam_broad_support_bypass": False,
+        "beam_disable_corrected_bypass": False,
+        "beam_strict_direct_bypass": False,
+        "beam_verified_state_only": False,
+        "beam_answer_candidate_selector": False,
+        "beam_extractive_candidate": False,
+        "beam_state_direct_candidate": False,
+        "beam_direct_span_candidate": False,
+        "beam_ranked_state_memory_candidate": False,
+        "beam_ranked_state_memory_direct_bypass": False,
+        "beam_retrieved_excerpt_direct_bypass": False,
+        "beam_typed_projection_candidate": False,
+        "beam_memory_atomizer": False,
+        "beam_state_ledger": False,
+        "beam_state_verifier": False,
+        "beam_deterministic_state_resolver": False,
+        "beam_focused_state_answer": False,
+        "longmemeval_evidence_windows": False,
+        "longmemeval_structured_evidence": False,
+        "omit_temperature": False,
+        "reasoning_effort": None,
+        "locomo_conversations": None,
         "locomo_dataset_url": "https://example.test/locomo10.json",
         "longmemeval_dataset_url": "https://example.test/longmem.json",
         "beam_size": "10M",
@@ -288,6 +322,131 @@ def test_prepare_writes_private_artifacts_and_sanitized_public_manifest(tmp_path
     assert "sk-test-secret-value" not in rendered
 
 
+def test_approval_command_propagates_shared_answer_caps_and_no_temperature(tmp_path):
+    module = load_module()
+    spec = module.suite_specs(args(tmp_path), "20260529T010203Z")[0]
+    argv = module.approval_command(
+        spec,
+        args(
+            tmp_path,
+            answer_max_memories=10,
+            answer_memory_max_chars=1200,
+            answer_total_max_chars=18000,
+            omit_temperature=True,
+            reasoning_effort="minimal",
+        ),
+        "https://api.example.test/v1/chat/completions",
+    )
+
+    assert "--answer-max-memories" in argv
+    assert option_value(argv, "--answer-max-memories") == "10"
+    assert "--answer-memory-max-chars" in argv
+    assert option_value(argv, "--answer-memory-max-chars") == "1200"
+    assert "--answer-total-max-chars" in argv
+    assert option_value(argv, "--answer-total-max-chars") == "18000"
+    assert "--omit-temperature" in argv
+    assert option_value(argv, "--reasoning-effort") == "minimal"
+
+
+def test_approval_command_scopes_suite_specific_flags(tmp_path):
+    module = load_module()
+    current_args = args(
+        tmp_path,
+        temporal_fact_extraction=True,
+        locomo_evidence_windows=True,
+        longmemeval_evidence_windows=True,
+        longmemeval_structured_evidence=True,
+        beam_evidence_windows=True,
+        beam_answer_contract=True,
+        beam_structured_evidence=True,
+        beam_turn_neighborhoods=True,
+        beam_category_synthesis=True,
+        beam_state_reducer=True,
+        beam_direct_answer_bypass=True,
+        beam_broad_support_bypass=True,
+        beam_disable_corrected_bypass=True,
+        beam_strict_direct_bypass=True,
+        beam_verified_state_only=True,
+        beam_answer_candidate_selector=True,
+        beam_extractive_candidate=True,
+        beam_state_direct_candidate=True,
+        beam_direct_span_candidate=True,
+        beam_ranked_state_memory_candidate=True,
+        beam_ranked_state_memory_direct_bypass=True,
+        beam_retrieved_excerpt_direct_bypass=True,
+        beam_typed_projection_candidate=True,
+        beam_memory_atomizer=True,
+        beam_state_ledger=True,
+        beam_state_verifier=True,
+        beam_deterministic_state_resolver=True,
+        beam_focused_state_answer=True,
+    )
+    specs = {spec.name: spec for spec in module.suite_specs(current_args, "20260529T010203Z")}
+
+    locomo = module.approval_command(specs["locomo30"], current_args, "https://api.example.test/v1")
+    longmem = module.approval_command(specs["longmemeval30"], current_args, "https://api.example.test/v1")
+    beam = module.approval_command(specs["beam30"], current_args, "https://api.example.test/v1")
+
+    assert "--temporal-fact-extraction" in locomo
+    assert "--locomo-evidence-windows" in locomo
+    assert "--longmemeval-evidence-windows" not in locomo
+    assert "--beam-state-reducer" not in locomo
+
+    assert "--longmemeval-evidence-windows" in longmem
+    assert "--longmemeval-structured-evidence" in longmem
+    assert "--temporal-fact-extraction" not in longmem
+    assert "--locomo-evidence-windows" not in longmem
+    assert "--beam-state-reducer" not in longmem
+
+    for flag in [
+        "--beam-evidence-windows",
+        "--beam-answer-contract",
+        "--beam-structured-evidence",
+        "--beam-turn-neighborhoods",
+        "--beam-category-synthesis",
+        "--beam-state-reducer",
+        "--beam-direct-answer-bypass",
+        "--beam-broad-support-bypass",
+        "--beam-disable-corrected-bypass",
+        "--beam-strict-direct-bypass",
+        "--beam-verified-state-only",
+        "--beam-answer-candidate-selector",
+        "--beam-extractive-candidate",
+        "--beam-state-direct-candidate",
+        "--beam-direct-span-candidate",
+        "--beam-ranked-state-memory-candidate",
+        "--beam-ranked-state-memory-direct-bypass",
+        "--beam-retrieved-excerpt-direct-bypass",
+        "--beam-typed-projection-candidate",
+        "--beam-memory-atomizer",
+        "--beam-state-ledger",
+        "--beam-state-verifier",
+        "--beam-deterministic-state-resolver",
+        "--beam-focused-state-answer",
+    ]:
+        assert flag in beam
+    assert "--longmemeval-evidence-windows" not in beam
+    assert "--temporal-fact-extraction" not in beam
+    assert "--locomo-evidence-windows" not in beam
+
+
+def test_readiness_command_uses_failed_mock_verification_when_present(tmp_path):
+    module = load_module()
+    current_args = args(tmp_path)
+    specs = module.suite_specs(current_args, "20260529T010203Z")
+    failed_path = module.failed_mock_verification_path(specs[2].mock_verification)
+    failed_path.parent.mkdir(parents=True, exist_ok=True)
+    failed_path.write_text(json.dumps({"ok": False}), encoding="utf-8")
+
+    argv = module.readiness_command(specs, current_args, tmp_path / "reports" / "readiness.json")
+    suite_values = [argv[index + 1].split("|") for index, value in enumerate(argv) if value == "--suite"]
+    suites = {value[0]: value for value in suite_values}
+
+    assert suites["beam30"][4] == failed_path.name
+    assert suites["locomo30"][4] == specs[0].mock_verification.name
+    assert suites["longmemeval30"][4] == specs[1].mock_verification.name
+
+
 def test_beam_predict_generation_uses_turn_level_rows_for_judged_bundle(tmp_path, monkeypatch):
     module = load_module()
     captured = {}
@@ -325,6 +484,38 @@ def test_beam_predict_generation_uses_turn_level_rows_for_judged_bundle(tmp_path
 
     assert captured["session_only"] is False
     assert captured["question_types"] == "information_extraction,knowledge_update,instruction_following,preference_following"
+    assert captured["top_k_values"] == [10, 20, 50, 200]
+
+
+def test_locomo_predict_generation_accepts_conversation_selector(tmp_path, monkeypatch):
+    module = load_module()
+    captured = {}
+
+    fake_locomo_predict = types.ModuleType("kontext_v2.benchmarks.locomo_predict")
+
+    def fake_run_locomo_predict_sweep(*_args, **kwargs):
+        captured.update(kwargs)
+        return {"dataset": "locomo10", "run_id": kwargs["run_id"], "report_paths": {}}
+
+    fake_locomo_predict.run_locomo_predict_sweep = fake_run_locomo_predict_sweep
+    monkeypatch.setitem(sys.modules, "kontext_v2.benchmarks.locomo_predict", fake_locomo_predict)
+    spec = module.SuiteSpec(
+        name="locomo30",
+        dataset_kind="locomo",
+        run_id="locomo-run",
+        max_cost_usd=0.20,
+        private_bundle=tmp_path / "private" / "locomo.json",
+        predict_report=tmp_path / "reports" / "locomo-predict.json",
+        mock_run=tmp_path / "reports" / "locomo-mock.json",
+        mock_verification=tmp_path / "reports" / "locomo-verify.json",
+        approval_packet=tmp_path / "reports" / "locomo-approval.json",
+        paid_run=tmp_path / "reports" / "locomo-paid.json",
+        paid_verification=tmp_path / "reports" / "locomo-paid-verify.json",
+    )
+
+    module.run_predict_suite(spec, args(tmp_path, locomo_conversations="1,3"), "postgresql://example")
+
+    assert captured["conversations"] == "1,3"
     assert captured["top_k_values"] == [10, 20, 50, 200]
 
 

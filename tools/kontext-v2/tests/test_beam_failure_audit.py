@@ -1171,6 +1171,142 @@ def test_beam_failure_audit_classifies_ranked_state_memory_candidate_failures_wi
     assert_public_report_has_no_raw_payload(report)
 
 
+def test_beam_failure_audit_classifies_direct_span_candidate_failures_without_raw_payload(tmp_path):
+    module = load_module()
+    bundle_path = tmp_path / "bundle.json"
+    run_path = tmp_path / "run.json"
+    debug_path = tmp_path / "debug.json"
+    bundle_path.write_text(
+        json.dumps(
+            {
+                "dataset": "beam_1M",
+                "mode": "private-judged-input-bundle",
+                "questions": [
+                    {
+                        "question_id": "span-wrong",
+                        "category": "knowledge_update",
+                        "question": "private raw question",
+                        "ground_truth_answer": "private raw answer",
+                        "retrieved_memories_by_top_k": {"20": [{"memory": "private raw memory"}]},
+                    },
+                    {
+                        "question_id": "span-not-selected",
+                        "category": "knowledge_update",
+                        "question": "private raw question 2",
+                        "ground_truth_answer": "private raw answer 2",
+                        "retrieved_memories_by_top_k": {"20": [{"memory": "private raw memory 2"}]},
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    run_path.write_text(
+        json.dumps(
+            {
+                "dataset": "beam_1M",
+                "run_id": "beam-private",
+                "summary": {"20": {"total": 2, "passed": 0, "avg_score": 0.0}},
+                "questions": [
+                    {
+                        "question_id": "span-wrong",
+                        "category": "knowledge_update",
+                        "question_hash": "hash1",
+                        "cutoff_results": {
+                            "20": {
+                                "judgment": "FAIL",
+                                "score": 0.0,
+                                "judge_count": 3,
+                                "judge_pass_count": 0,
+                                "memories_evaluated": 20,
+                                "beam_deterministic_state_resolver": True,
+                                "beam_state_resolver_status": "resolved",
+                                "beam_direct_span_candidate": True,
+                                "beam_direct_span_candidate_used": True,
+                                "beam_answer_candidate_count": 4,
+                                "beam_answer_selected_candidate_index": 3,
+                                "beam_answer_candidate_summaries": [
+                                    {"id": "candidate_1", "kind": "normal", "answer_hash": "normalhash", "answer_chars": 12},
+                                    {"id": "candidate_2", "kind": "alternate", "answer_hash": "althash", "answer_chars": 11},
+                                    {"id": "candidate_3", "kind": "direct_span", "answer_hash": "spanhash", "answer_chars": 17},
+                                    {"id": "candidate_4", "kind": "typed_projection", "answer_hash": "typedhash", "answer_chars": 17},
+                                ],
+                                "beam_answer_selector_status": "ok",
+                                "generated_answer_hash": "spanhash",
+                            }
+                        },
+                    },
+                    {
+                        "question_id": "span-not-selected",
+                        "category": "knowledge_update",
+                        "question_hash": "hash2",
+                        "cutoff_results": {
+                            "20": {
+                                "judgment": "FAIL",
+                                "score": 0.0,
+                                "judge_count": 3,
+                                "judge_pass_count": 0,
+                                "memories_evaluated": 20,
+                                "beam_deterministic_state_resolver": True,
+                                "beam_state_resolver_status": "resolved",
+                                "beam_direct_span_candidate": True,
+                                "beam_direct_span_candidate_used": False,
+                                "beam_answer_candidate_count": 4,
+                                "beam_answer_selected_candidate_index": 1,
+                                "beam_answer_candidate_summaries": [
+                                    {"id": "candidate_1", "kind": "normal", "answer_hash": "normalhash2", "answer_chars": 12},
+                                    {"id": "candidate_2", "kind": "alternate", "answer_hash": "althash2", "answer_chars": 11},
+                                    {"id": "candidate_3", "kind": "direct_span", "answer_hash": "spanhash2", "answer_chars": 17},
+                                    {"id": "candidate_4", "kind": "typed_projection", "answer_hash": "typedhash2", "answer_chars": 17},
+                                ],
+                                "beam_answer_selector_status": "ok",
+                                "generated_answer_hash": "normalhash2",
+                            }
+                        },
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    debug_path.write_text(
+        json.dumps(
+            {
+                "mode": "private-judged-debug",
+                "records": [
+                    {"question_id": "span-wrong", "generated_answer": "private wrong span"},
+                    {"question_id": "span-not-selected", "generated_answer": "private wrong normal"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = module.build_audit_report(
+        module.load_json(bundle_path),
+        module.load_json(run_path),
+        debug=module.load_json(debug_path),
+        cutoff=20,
+        bundle_path=bundle_path,
+        run_path=run_path,
+        debug_path=debug_path,
+    )
+    rendered = json.dumps(report)
+
+    assert report["failure_classes"]["beam_direct_span_candidate_wrong"] == 1
+    assert report["failure_classes"]["beam_direct_span_candidate_not_selected"] == 1
+    failed = {row["question_hash"]: row for row in report["failed_questions"]}
+    assert failed["hash1"]["selected_candidate_kind"] == "direct_span"
+    assert failed["hash1"]["candidate_summaries"][2]["answer_hash"] == "spanhash"
+    assert failed["hash2"]["selected_candidate_kind"] == "normal"
+    assert failed["hash2"]["generated_answer_hash"] == "normalhash2"
+    assert "private raw question" not in rendered
+    assert "private raw answer" not in rendered
+    assert "private raw memory" not in rendered
+    assert "private wrong" not in rendered
+    assert_public_report_has_no_raw_payload(report)
+
+
 def test_beam_failure_audit_classifies_typed_projection_candidate_failures_without_raw_payload(tmp_path):
     module = load_module()
     bundle_path = tmp_path / "bundle.json"

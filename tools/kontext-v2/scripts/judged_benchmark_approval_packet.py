@@ -129,6 +129,7 @@ def memory_limited_paid_path(args: argparse.Namespace) -> bool:
         bool(getattr(args, name, False))
         for name in [
             "temporal_fact_extraction",
+            "locomo_evidence_windows",
             "beam_evidence_windows",
             "beam_answer_contract",
             "beam_structured_evidence",
@@ -138,6 +139,7 @@ def memory_limited_paid_path(args: argparse.Namespace) -> bool:
             "beam_answer_candidate_selector",
             "beam_extractive_candidate",
             "beam_state_direct_candidate",
+            "beam_direct_span_candidate",
             "beam_ranked_state_memory_candidate",
             "beam_typed_projection_candidate",
             "beam_memory_atomizer",
@@ -252,6 +254,8 @@ def command_template(args: argparse.Namespace, judge_units_per_question: float =
         parts.extend(["--answer-total-max-chars", str(answer_limits["answer_total_max_chars"])])
     if getattr(args, "temporal_fact_extraction", False):
         parts.append("--temporal-fact-extraction")
+    if getattr(args, "locomo_evidence_windows", False):
+        parts.append("--locomo-evidence-windows")
     if getattr(args, "beam_evidence_windows", False):
         parts.append("--beam-evidence-windows")
     if getattr(args, "beam_answer_contract", False):
@@ -280,6 +284,8 @@ def command_template(args: argparse.Namespace, judge_units_per_question: float =
         parts.append("--beam-extractive-candidate")
     if getattr(args, "beam_state_direct_candidate", False):
         parts.append("--beam-state-direct-candidate")
+    if getattr(args, "beam_direct_span_candidate", False):
+        parts.append("--beam-direct-span-candidate")
     if getattr(args, "beam_ranked_state_memory_candidate", False):
         parts.append("--beam-ranked-state-memory-candidate")
     if getattr(args, "beam_ranked_state_memory_direct_bypass", False):
@@ -306,6 +312,8 @@ def command_template(args: argparse.Namespace, judge_units_per_question: float =
         parts.extend(["--private-debug-output", args.private_debug_output])
     if getattr(args, "omit_temperature", False):
         parts.append("--omit-temperature")
+    if getattr(args, "reasoning_effort", None):
+        parts.extend(["--reasoning-effort", str(args.reasoning_effort)])
     parts.extend(
         [
         "--verification-output",
@@ -447,6 +455,7 @@ def build_packet(args: argparse.Namespace) -> dict[str, Any]:
             getattr(args, "beam_state_reducer", False)
             or getattr(args, "beam_deterministic_state_resolver", False)
         )
+        and not getattr(args, "beam_answer_candidate_selector", False)
         else 0
     )
     longmemeval_structured_calls = base_answer_calls if getattr(args, "longmemeval_structured_evidence", False) else 0
@@ -522,6 +531,7 @@ def build_packet(args: argparse.Namespace) -> dict[str, Any]:
         "top_k_values": cutoffs,
         "benchmark_mode": benchmark_mode,
         "temporal_fact_extraction": bool(getattr(args, "temporal_fact_extraction", False)),
+        "locomo_evidence_windows": bool(getattr(args, "locomo_evidence_windows", False)),
         "beam_evidence_windows": bool(getattr(args, "beam_evidence_windows", False)),
         "beam_answer_contract": bool(getattr(args, "beam_answer_contract", False)),
         "beam_structured_evidence": bool(getattr(args, "beam_structured_evidence", False)),
@@ -536,6 +546,7 @@ def build_packet(args: argparse.Namespace) -> dict[str, Any]:
         "beam_answer_candidate_selector": bool(getattr(args, "beam_answer_candidate_selector", False)),
         "beam_extractive_candidate": bool(getattr(args, "beam_extractive_candidate", False)),
         "beam_state_direct_candidate": bool(getattr(args, "beam_state_direct_candidate", False)),
+        "beam_direct_span_candidate": bool(getattr(args, "beam_direct_span_candidate", False)),
         "beam_ranked_state_memory_candidate": bool(getattr(args, "beam_ranked_state_memory_candidate", False)),
         "beam_ranked_state_memory_direct_bypass": bool(getattr(args, "beam_ranked_state_memory_direct_bypass", False)),
         "beam_retrieved_excerpt_direct_bypass": bool(getattr(args, "beam_retrieved_excerpt_direct_bypass", False)),
@@ -549,6 +560,7 @@ def build_packet(args: argparse.Namespace) -> dict[str, Any]:
         "longmemeval_structured_evidence": bool(getattr(args, "longmemeval_structured_evidence", False)),
         "private_debug_output": getattr(args, "private_debug_output", None),
         "omit_temperature": bool(getattr(args, "omit_temperature", False)),
+        "reasoning_effort": getattr(args, "reasoning_effort", None),
         "answer_prompt_caps": answer_prompt_caps,
         "judge_units_total": format_number(judge_units_total),
         "judge_units_per_question": format_number(judge_units_per_question),
@@ -597,6 +609,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--answer-memory-max-chars", type=int)
     parser.add_argument("--answer-total-max-chars", type=int)
     parser.add_argument("--temporal-fact-extraction", action="store_true")
+    parser.add_argument("--locomo-evidence-windows", action="store_true")
     parser.add_argument("--beam-evidence-windows", action="store_true")
     parser.add_argument("--beam-answer-contract", action="store_true")
     parser.add_argument("--beam-structured-evidence", action="store_true")
@@ -611,6 +624,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--beam-answer-candidate-selector", action="store_true")
     parser.add_argument("--beam-extractive-candidate", action="store_true")
     parser.add_argument("--beam-state-direct-candidate", action="store_true")
+    parser.add_argument("--beam-direct-span-candidate", action="store_true")
     parser.add_argument("--beam-ranked-state-memory-candidate", action="store_true")
     parser.add_argument("--beam-ranked-state-memory-direct-bypass", action="store_true")
     parser.add_argument("--beam-retrieved-excerpt-direct-bypass", action="store_true")
@@ -624,6 +638,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--longmemeval-structured-evidence", action="store_true")
     parser.add_argument("--private-debug-output")
     parser.add_argument("--omit-temperature", action="store_true")
+    parser.add_argument("--reasoning-effort")
     parser.add_argument("--answer-input-usd-per-1m", type=float, required=True)
     parser.add_argument("--answer-output-usd-per-1m", type=float, required=True)
     parser.add_argument("--judge-input-usd-per-1m", type=float, required=True)

@@ -8,6 +8,7 @@ import pytest
 
 from kontext_v2.benchmarks.fixtures import load_beam_real_fixture
 from kontext_v2.benchmarks.state_trial import (
+    _judged_run_question_hashes,
     _projected_answer_value,
     _state_key,
     build_benchmark_state_events,
@@ -429,6 +430,104 @@ def test_run_judged_bundle_state_trial_reports_sanitized_private_projection_over
     assert "sandstone" not in serialized
 
 
+def test_run_judged_bundle_state_trial_attaches_sanitized_judged_proof(monkeypatch):
+    monkeypatch.setenv("KONTEXT_BENCHMARK_STATE_MODEL_ENABLED", "1")
+    verification = {
+        "ok": True,
+        "completed_calls": 18,
+        "summary": {"total": 1, "accuracy": 1.0, "avg_score": 1.0},
+        "gates": {
+            "raw_payload": {"ok": True, "hit_count": 0, "hit_paths": []},
+            "model_calls": {"ok": True, "actual": True, "completed_calls": 18},
+            "question_count": {"ok": True, "selected_questions": 1},
+        },
+        "private_raw_text": "must not be copied",
+    }
+
+    report = run_judged_bundle_state_trial(
+        FakeStateTrialRepo(),
+        _private_bundle_fixture(),
+        namespace="benchmark:private-hard",
+        source_hash="private-bundle-hash",
+        extractor_version="trial-private-v1",
+        top_k=20,
+        dry_run=True,
+        judged_verification=verification,
+    )
+    serialized = json.dumps(report, sort_keys=True)
+
+    assert report["runs_model_calls"] is True
+    assert report["actual_judged_accuracy_proven"] is True
+    assert report["raw_payload_hits"] == 0
+    assert report["judged_proof"] == {
+        "ok": True,
+        "runs_model_calls": True,
+        "actual_judged_accuracy_proven": True,
+        "raw_payload_hits": 0,
+        "total": 1,
+        "accuracy": 1.0,
+        "avg_score": 1.0,
+        "completed_calls": 18,
+    }
+    assert "must not be copied" not in serialized
+
+
+def test_run_judged_bundle_state_trial_filters_to_selected_judged_hashes_before_proof(monkeypatch):
+    monkeypatch.setenv("KONTEXT_BENCHMARK_STATE_MODEL_ENABLED", "1")
+    bundle = _private_bundle_fixture()
+    bundle["questions"].append(
+        {
+            "question_id": "private-pref-2",
+            "category": "preference_following",
+            "question": "What second interface does the user prefer?",
+            "ground_truth_answer": "Use the obsidian interface.",
+            "retrieval_evaluable": True,
+            "retrieved_memories_by_top_k": {
+                "20": [
+                    {
+                        "id": "mem-second",
+                        "memory_hash": "secondhash",
+                        "memory": "User: I now prefer the obsidian interface.",
+                        "metadata": {"timestamp": "2023-06-03", "source_ids": ["second"]},
+                    }
+                ]
+            },
+        }
+    )
+    selected_hash = build_judged_bundle_state_events(
+        bundle,
+        namespace="benchmark:private-hard",
+        source_hash="private-bundle-hash",
+        top_k=20,
+    ).questions[0]["question_hash"]
+    verification = {
+        "ok": True,
+        "completed_calls": 18,
+        "summary": {"total": 1, "accuracy": 1.0, "avg_score": 1.0},
+        "gates": {
+            "raw_payload": {"ok": True, "hit_count": 0},
+            "model_calls": {"ok": True, "actual": True, "completed_calls": 18},
+        },
+    }
+
+    report = run_judged_bundle_state_trial(
+        FakeStateTrialRepo(),
+        bundle,
+        namespace="benchmark:private-hard",
+        source_hash="private-bundle-hash",
+        extractor_version="trial-private-v1",
+        top_k=20,
+        dry_run=True,
+        judged_verification=verification,
+        selected_question_hashes=_judged_run_question_hashes({"questions": [{"question_hash": selected_hash}]}),
+    )
+    serialized = json.dumps(report, sort_keys=True)
+
+    assert report["counts"]["state_questions"] == 1
+    assert report["actual_judged_accuracy_proven"] is True
+    assert "obsidian" not in serialized
+
+
 def test_run_judged_bundle_state_trial_dry_run_projects_without_accepting(monkeypatch):
     monkeypatch.setenv("KONTEXT_BENCHMARK_STATE_MODEL_ENABLED", "1")
     repo = FakeStateTrialRepo()
@@ -445,6 +544,9 @@ def test_run_judged_bundle_state_trial_dry_run_projects_without_accepting(monkey
 
     assert report["ok"] is True
     assert report["dry_run"] is True
+    assert report["runs_model_calls"] is False
+    assert report["actual_judged_accuracy_proven"] is False
+    assert report["raw_payload_hits"] == 0
     assert repo.accepted == []
     assert repo.edges == []
     assert repo.rebuilt == []

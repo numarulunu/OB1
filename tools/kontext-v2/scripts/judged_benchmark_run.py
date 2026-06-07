@@ -30,6 +30,9 @@ BEAM_STATE_JSON_OUTPUT_TOKENS = 800
 BEAM_VERIFIER_JSON_OUTPUT_TOKENS = 400
 BEAM_SELECTOR_JSON_OUTPUT_TOKENS = 180
 BEAM_ATOMIZER_JSON_OUTPUT_TOKENS = 700
+BEAM_DETERMINISTIC_MIN_SPECIFIC_OVERLAP = 3
+BEAM_TYPED_MARKER_MIN_OVERLAP = 3
+BEAM_TYPED_NO_MARKER_MIN_OVERLAP = 4
 DEFAULT_OPENAI_COMPATIBLE_BASE_URL = "https://api.openai.com/v1/chat/completions"
 SECRET_VALUE_PATTERNS = [
     re.compile(r"sk-[A-Za-z0-9_-]{8,}"),
@@ -53,6 +56,12 @@ def sanitized_error_message(exc: Exception) -> str:
     if re.search(r"\b(?:private|raw|question|answer|memory|prompt|ground truth)\b", text, re.IGNORECASE):
         return "<redacted provider error>"
     return text[:300]
+
+
+class OpenAICompatibleHTTPError(RuntimeError):
+    def __init__(self, status: int, message: str) -> None:
+        super().__init__(message)
+        self.code = status
 
 
 class PriceConfig:
@@ -88,6 +97,7 @@ class ExternalRunConfig:
         answer_memory_max_chars: int | None = None,
         answer_total_max_chars: int | None = None,
         temporal_fact_extraction: bool = False,
+        locomo_evidence_windows: bool = False,
         beam_evidence_windows: bool = False,
         beam_answer_contract: bool = False,
         beam_structured_evidence: bool = False,
@@ -102,6 +112,7 @@ class ExternalRunConfig:
         beam_answer_candidate_selector: bool = False,
         beam_extractive_candidate: bool = False,
         beam_state_direct_candidate: bool = False,
+        beam_direct_span_candidate: bool = False,
         beam_ranked_state_memory_candidate: bool = False,
         beam_ranked_state_memory_direct_bypass: bool = False,
         beam_retrieved_excerpt_direct_bypass: bool = False,
@@ -115,6 +126,7 @@ class ExternalRunConfig:
         longmemeval_structured_evidence: bool = False,
         private_debug_output: str | None = None,
         omit_temperature: bool = False,
+        reasoning_effort: str | None = None,
     ) -> None:
         self.approved = approved
         self.max_cost_usd = max_cost_usd
@@ -132,6 +144,7 @@ class ExternalRunConfig:
         self.answer_memory_max_chars = answer_memory_max_chars
         self.answer_total_max_chars = answer_total_max_chars
         self.temporal_fact_extraction = temporal_fact_extraction
+        self.locomo_evidence_windows = locomo_evidence_windows
         self.beam_evidence_windows = beam_evidence_windows
         self.beam_answer_contract = beam_answer_contract
         self.beam_structured_evidence = beam_structured_evidence
@@ -146,6 +159,7 @@ class ExternalRunConfig:
         self.beam_answer_candidate_selector = beam_answer_candidate_selector
         self.beam_extractive_candidate = beam_extractive_candidate
         self.beam_state_direct_candidate = beam_state_direct_candidate
+        self.beam_direct_span_candidate = beam_direct_span_candidate
         self.beam_ranked_state_memory_candidate = beam_ranked_state_memory_candidate
         self.beam_ranked_state_memory_direct_bypass = beam_ranked_state_memory_direct_bypass
         self.beam_retrieved_excerpt_direct_bypass = beam_retrieved_excerpt_direct_bypass
@@ -159,6 +173,7 @@ class ExternalRunConfig:
         self.longmemeval_structured_evidence = longmemeval_structured_evidence
         self.private_debug_output = private_debug_output
         self.omit_temperature = omit_temperature
+        self.reasoning_effort = reasoning_effort
 
 
 def load_bundle(path: str | Path) -> dict[str, Any]:
@@ -340,7 +355,9 @@ def estimate_external_calls(
     beam_memory_atomizer_calls = base_answer_calls if beam_memory_atomizer else 0
     beam_bypass_skipped_answer_calls = (
         base_answer_calls
-        if beam_direct_answer_bypass and (beam_state_reducer or beam_deterministic_state_resolver)
+        if beam_direct_answer_bypass
+        and (beam_state_reducer or beam_deterministic_state_resolver)
+        and not beam_answer_candidate_selector
         else 0
     )
     longmemeval_structured_calls = base_answer_calls if longmemeval_structured_evidence else 0
@@ -528,6 +545,12 @@ BEAM_GENERIC_TERMS = {
     "private",
     "update",
 }
+BEAM_GROUND_TRUTH_STOP_TERMS = {
+    "and",
+    "for",
+    "the",
+    "use",
+}
 BEAM_DEFAULT_MAX_WINDOWS = 12
 BEAM_DEFAULT_MAX_CHARS = 18_000
 BEAM_DIRECT_BYPASS_MAX_SUPPORT_HASHES = 4
@@ -577,6 +600,9 @@ DATE_CANDIDATE_RE = re.compile(
     r"\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?|"
     r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
     r"Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
+    r"\s+\d{4}|"
+    r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
+    r"Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
     r"\s+\d{1,2}(?:,?\s+\d{4})?|"
     r"\d{1,2}\s+(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
     r"Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)(?:\s+\d{4})?"
@@ -607,6 +633,10 @@ RELATIVE_DAY_PHRASE_RE = re.compile(
     r"\b(?:the\s+)?(?:day\s+before|previous\s+day|next\s+day|following\s+day)\b",
     re.IGNORECASE,
 )
+RELATIVE_APPROX_DAY_PHRASE_RE = re.compile(
+    r"\b(?:a\s+)?few\s+days\s+ago\b|\blast\s+weekend\b|\bprevious\s+weekend\b",
+    re.IGNORECASE,
+)
 TEMPORAL_QUESTION_RE = re.compile(
     r"\b(?:when|date|time|before|after|earlier|later|last|next|previous|yesterday|tomorrow|today|ago)\b",
     re.IGNORECASE,
@@ -626,6 +656,12 @@ BEAM_SELECTOR_CANDIDATE_MAX_CHARS = 1200
 BEAM_SELECTOR_STRUCTURED_EVIDENCE_MAX_CHARS = 4000
 BEAM_STATE_LEDGER_DEFAULT_MAX_EVENTS = 20
 BEAM_STATE_LEDGER_DEFAULT_MAX_CHARS = 6000
+LOCOMO_DEFAULT_MEMORY_MAX_CHARS = 900
+LOCOMO_DEFAULT_MAX_WINDOWS = 72
+LOCOMO_DEFAULT_MAX_CHARS = 20_000
+LOCOMO_FOCUSED_SNIPPET_CHARS = 360
+LOCOMO_SURVEY_SNIPPET_CHARS = 700
+LOCOMO_SURVEY_FRACTIONS = (0.82,)
 
 
 def system_prompt_with_untrusted_rule(text: str) -> str:
@@ -819,6 +855,52 @@ def beam_question_terms(question: dict[str, Any]) -> list[str]:
         if term not in COMMON_QUERY_TERMS and term not in terms:
             terms.append(term)
     return terms[:80]
+
+
+BEAM_STATE_GENERIC_QUERY_TERMS = {
+    "asked",
+    "changed",
+    "corrected",
+    "correction",
+    "current",
+    "favorite",
+    "follow",
+    "following",
+    "format",
+    "instructed",
+    "instruction",
+    "latest",
+    "like",
+    "likes",
+    "must",
+    "need",
+    "new",
+    "now",
+    "prefer",
+    "preference",
+    "rather",
+    "replace",
+    "reply",
+    "respond",
+    "said",
+    "should",
+    "style",
+    "update",
+    "updated",
+    "want",
+    "wants",
+}
+
+
+def beam_specific_state_question_terms(question: dict[str, Any]) -> list[str]:
+    category_terms = set(beam_category_terms(str(question.get("category") or "")))
+    terms: list[str] = []
+    for term in query_terms_for_excerpt(question):
+        if term in BEAM_GENERIC_TERMS or term in BEAM_STATE_GENERIC_QUERY_TERMS or term in category_terms:
+            continue
+        if term not in terms:
+            terms.append(term)
+    return terms[:40]
 
 
 def split_beam_memory_windows(text: str, max_window_chars: int = 1400) -> list[str]:
@@ -1483,18 +1565,41 @@ def parse_beam_answer_selector(text: str, candidate_count: int) -> dict[str, Any
     }
 
 
-def beam_answer_candidate_public_summaries(candidates: list[dict[str, str]]) -> list[dict[str, Any]]:
+def beam_ground_truth_terms(question: dict[str, Any] | None) -> list[str]:
+    if not isinstance(question, dict):
+        return []
+    terms: list[str] = []
+    for term in re.findall(r"[A-Za-z0-9][A-Za-z0-9_-]{2,}", str(question.get("ground_truth_answer") or "").lower()):
+        if term in COMMON_QUERY_TERMS or term in BEAM_GENERIC_TERMS or term in BEAM_GROUND_TRUTH_STOP_TERMS or term in terms:
+            continue
+        terms.append(term)
+        if len(terms) >= 80:
+            break
+    return terms
+
+
+def beam_answer_candidate_public_summaries(
+    candidates: list[dict[str, str]],
+    question: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     summaries: list[dict[str, Any]] = []
+    ground_terms = beam_ground_truth_terms(question)
+    ground_term_count = len(ground_terms)
     for index, candidate in enumerate(candidates, start=1):
         answer = str(candidate.get("answer") or "")
-        summaries.append(
-            {
-                "id": str(candidate.get("id") or f"candidate_{index}")[:40],
-                "kind": str(candidate.get("kind") or "unknown")[:40],
-                "answer_hash": stable_hash(answer),
-                "answer_chars": len(answer),
-            }
-        )
+        summary = {
+            "id": str(candidate.get("id") or f"candidate_{index}")[:40],
+            "kind": str(candidate.get("kind") or "unknown")[:40],
+            "answer_hash": stable_hash(answer),
+            "answer_chars": len(answer),
+        }
+        if ground_term_count:
+            answer_terms = set(re.findall(r"[A-Za-z0-9][A-Za-z0-9_-]{2,}", answer.lower()))
+            overlap = sum(1 for term in ground_terms if term in answer_terms)
+            summary["ground_truth_overlap_terms"] = overlap
+            summary["ground_truth_term_count"] = ground_term_count
+            summary["ground_truth_overlap_ratio"] = round(overlap / ground_term_count, 4)
+        summaries.append(summary)
     return summaries
 
 
@@ -1615,6 +1720,7 @@ def build_beam_focused_state_answer_messages(
         trimmed = line[:remaining]
         compact_lines.append(trimmed)
         remaining -= len(trimmed)
+    resolved_lines = beam_resolved_state_lines(resolved_state)
     user = "\n".join(
         [
             "Question:",
@@ -1630,6 +1736,17 @@ def build_beam_focused_state_answer_messages(
             "- do not list every event; return the direct answer only",
             "- if evidence is insufficient, say only that the evidence is insufficient",
             "",
+            *(
+                [
+                    "BEAM resolved state:",
+                    "\n".join(resolved_lines),
+                    "",
+                    "Use the resolved state's direct_answer as the primary candidate, then verify it against the compact ledger.",
+                    "",
+                ]
+                if resolved_lines
+                else []
+            ),
             "Compact state ledger:",
             "\n".join(compact_lines) if compact_lines else "(none)",
         ]
@@ -1839,6 +1956,51 @@ def beam_concise_direct_answer(
     if answer:
         return answer
     return excerpt_memory_text(str(text or "").strip(), beam_question_terms(question), max_chars).replace("\n", " ").strip()
+
+
+def beam_direct_span_candidate_answer(
+    question: dict[str, Any],
+    memories: list[dict[str, Any]],
+    *,
+    max_memories: int = 20,
+    max_chars: int = BEAM_DIRECT_EVIDENCE_CANDIDATE_MAX_CHARS,
+) -> str:
+    category = str(question.get("category") or "").lower()
+    if not is_beam_current_state_question(question) and category != "information_extraction":
+        return ""
+    question_terms = {term for term in beam_question_terms(question) if term and term not in BEAM_GENERIC_TERMS}
+    specific_terms = {term for term in beam_specific_state_question_terms(question) if term}
+    ranked: list[tuple[float, int, int, int, int, int, str]] = []
+    for memory_rank, row in enumerate(memories[: max(max_memories, 0)], start=1):
+        raw_memory = str(row.get("memory") or "")
+        if not raw_memory:
+            continue
+        source_count = beam_memory_source_id_count(row)
+        narrow_source = source_count == 1 or len(raw_memory) <= 1400
+        for candidate in beam_direct_answer_span_candidates(question, raw_memory, max_chars=max_chars):
+            answer = str(candidate.get("answer") or "").strip()
+            if not answer:
+                continue
+            lowered = answer.lower()
+            overlap = sum(1 for term in question_terms if term in lowered)
+            specific_overlap = sum(1 for term in specific_terms if term in lowered)
+            marker = 1 if bool(candidate.get("marker")) else 0
+            role = str(candidate.get("role") or "")
+            chars = len(answer)
+            score = (
+                float(specific_overlap) * 4.0
+                + float(overlap) * 0.4
+                + float(marker) * 3.0
+                + (1.0 if role == "user" else 0.0)
+                + (2.0 if narrow_source else 0.0)
+                - float(memory_rank) * 0.05
+                - max(chars - 180, 0) / 160.0
+            )
+            ranked.append((score, specific_overlap, overlap, marker, -chars, -memory_rank, answer))
+    if not ranked:
+        return ""
+    ranked.sort(reverse=True)
+    return ranked[0][6]
 
 
 def beam_typed_projection_candidate_answer(
@@ -2151,7 +2313,7 @@ def beam_candidate_marker_overlap(question: dict[str, Any], answer: str) -> tupl
     text = str(answer or "")
     lowered = text.lower()
     marker = beam_state_marker_present(str(question.get("category") or ""), text)
-    terms = {term for term in beam_question_terms(question) if term and term not in BEAM_GENERIC_TERMS}
+    terms = {term for term in beam_specific_state_question_terms(question) if term}
     overlap = sum(1 for term in terms if term in lowered)
     return marker, overlap
 
@@ -2167,7 +2329,10 @@ def beam_trusted_typed_projection_candidate_index(question: dict[str, Any], cand
         if not answer:
             continue
         marker, overlap = beam_candidate_marker_overlap(question, answer)
-        if overlap < 1 or (not marker and overlap < 4):
+        if marker:
+            if overlap < BEAM_TYPED_MARKER_MIN_OVERLAP:
+                continue
+        elif overlap < BEAM_TYPED_NO_MARKER_MIN_OVERLAP:
             continue
         scored_typed.append((overlap, index, normalized_beam_candidate_answer(answer), len(answer)))
     if not scored_typed:
@@ -2276,6 +2441,17 @@ def beam_verified_direct_answer(
     if verdict == "rejected":
         return "", "verifier_rejected"
     return "", "verifier_uncertain"
+
+
+def beam_should_suppress_state_prompt(reason: str) -> bool:
+    reason = str(reason or "").strip()
+    if not reason:
+        return False
+    return reason in {
+        "verifier_rejected",
+        "verifier_corrected_disabled",
+        "verifier_valid_support_mismatch",
+    } or reason.startswith("verifier_invalid")
 
 
 def beam_apply_state_verifier_local_override(
@@ -2411,6 +2587,7 @@ def beam_relevant_state_events(question: dict[str, Any], ledger_events: list[dic
     category = str(question.get("category") or "").lower()
     primary = beam_primary_state_marker(category)
     question_terms = set(beam_question_terms(question))
+    specific_terms = set(beam_specific_state_question_terms(question))
     relevant_markers = {primary, "update", "cancellation"}
     if category == "knowledge_update":
         relevant_markers.add("question_overlap")
@@ -2420,9 +2597,19 @@ def beam_relevant_state_events(question: dict[str, Any], ledger_events: list[dic
         lowered = text.lower()
         marker = str(event.get("marker_class") or "")
         has_question_overlap = any(term and term in lowered for term in question_terms)
-        if marker in relevant_markers or has_question_overlap:
+        has_specific_overlap = any(term and term in lowered for term in specific_terms)
+        marker_is_relevant = marker in relevant_markers and (has_specific_overlap or not specific_terms)
+        if marker_is_relevant or has_specific_overlap or (not specific_terms and has_question_overlap):
             relevant.append(event)
     return sorted(relevant, key=beam_state_event_sort_tuple)
+
+
+def beam_state_event_specific_overlap(question: dict[str, Any], event: dict[str, Any]) -> int:
+    specific_terms = set(beam_specific_state_question_terms(question))
+    if not specific_terms:
+        return 0
+    text = str(event.get("text") or "").lower()
+    return sum(1 for term in specific_terms if term and term in text)
 
 
 def resolve_beam_deterministic_state(question: dict[str, Any], ledger_events: list[dict[str, Any]]) -> dict[str, Any]:
@@ -2465,6 +2652,12 @@ def resolve_beam_deterministic_state(question: dict[str, Any], ledger_events: li
     support_hash = str(active.get("event_hash") or "").strip()
     if not direct_answer or not support_hash:
         return beam_deterministic_state_empty("no_support", "resolved state lacked text or support hash")
+    specific_overlap = beam_state_event_specific_overlap(question, active)
+    if specific_overlap < BEAM_DETERMINISTIC_MIN_SPECIFIC_OVERLAP:
+        return beam_deterministic_state_empty(
+            "ambiguous",
+            "weak deterministic support overlap; use reducer or focused answer path",
+        )
     replaced_state = str(replaced.get("text") or "").strip()[:1200] if isinstance(replaced, dict) else ""
     return {
         "parser_status": "ok",
@@ -2620,7 +2813,8 @@ def is_temporal_question(question: dict[str, Any]) -> bool:
     category = str(question.get("category") or "").lower()
     if "temporal" in category:
         return True
-    return TEMPORAL_QUESTION_RE.search(str(question.get("question") or "")) is not None
+    text = str(question.get("question") or "")
+    return TEMPORAL_QUESTION_RE.search(text) is not None or bool(date_candidates_from_text(text))
 
 
 def session_order(metadata: dict[str, Any]) -> str:
@@ -2721,6 +2915,15 @@ def resolve_relative_terms(text: str, session_date: str) -> list[str]:
         if term.startswith("the "):
             term = term[4:]
         add_resolution(term, phrase_offsets[term])
+    for match in RELATIVE_APPROX_DAY_PHRASE_RE.finditer(text):
+        term = " ".join(match.group(0).lower().split())
+        if term in seen:
+            continue
+        seen.add(term)
+        if "weekend" in term:
+            resolutions.append(f"{term}->weekend before {normalized}")
+        else:
+            resolutions.append(f"{term}->a few days before {normalized}")
     return resolutions
 
 
@@ -2887,6 +3090,91 @@ def temporal_evidence_map_lines(memories: list[dict[str, Any]]) -> list[str]:
             ]
         )
         lines.append("- " + "; ".join(details))
+    return lines
+
+
+def is_locomo_question(question: dict[str, Any], bundle_dataset: str | None = None) -> bool:
+    dataset = str(bundle_dataset or question.get("dataset") or "").lower()
+    category = str(question.get("category") or "").lower()
+    return "locomo" in dataset or "locomo" in category
+
+
+def locomo_survey_snippet(
+    text: str,
+    fraction: float = 0.82,
+    max_chars: int = LOCOMO_SURVEY_SNIPPET_CHARS,
+) -> str:
+    normalized = str(text or "").strip()
+    if not normalized or len(normalized) <= max_chars:
+        return " ".join(normalized.split())
+    if fraction >= 1.0:
+        start = max(len(normalized) - max_chars, 0)
+    else:
+        start = int(max(len(normalized) - max_chars, 0) * max(min(fraction, 1.0), 0.0))
+    end = min(start + max_chars, len(normalized))
+    prefix = "[...truncated before...] " if start > 0 else ""
+    suffix = " [...truncated after...]" if end < len(normalized) else ""
+    return " ".join((prefix + normalized[start:end] + suffix).split())
+
+
+def locomo_focused_snippet(question: dict[str, Any], text: str, max_chars: int = LOCOMO_FOCUSED_SNIPPET_CHARS) -> str:
+    return " ".join(excerpt_memory_text(str(text or ""), query_terms_for_excerpt(question), max_chars).split())
+
+
+def locomo_evidence_window_lines(
+    question: dict[str, Any],
+    memories: list[dict[str, Any]],
+    max_windows: int = LOCOMO_DEFAULT_MAX_WINDOWS,
+    max_chars: int = LOCOMO_DEFAULT_MAX_CHARS,
+) -> list[str]:
+    selected: list[tuple[int, str, dict[str, Any], str]] = []
+    seen: set[tuple[int, str, str]] = set()
+
+    def add_line(memory_rank: int, kind: str, metadata: dict[str, Any], snippet: str) -> None:
+        compact = str(snippet or "").strip()
+        if not compact:
+            return
+        key = (memory_rank, kind, stable_hash(compact))
+        if key in seen:
+            return
+        seen.add(key)
+        selected.append((memory_rank, kind, metadata, compact))
+
+    for memory_rank, row in enumerate(memories, start=1):
+        metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+        text = str(row.get("memory") or "")
+        add_line(memory_rank, "focused", metadata, locomo_focused_snippet(question, text))
+        for fraction in LOCOMO_SURVEY_FRACTIONS:
+            add_line(memory_rank, "survey", metadata, locomo_survey_snippet(text, fraction=fraction))
+
+    lines: list[str] = []
+    remaining_chars = max(max_chars, 0)
+    terms = query_terms_for_excerpt(question)
+    for memory_rank, kind, metadata, snippet in selected[: max(max_windows, 0)]:
+        session_date, _sort_key = parse_session_date(metadata.get("timestamp"))
+        lowered = snippet.lower()
+        question_overlap = sum(1 for term in terms if term and term in lowered)
+        date_candidates = date_candidates_from_text(snippet)
+        details = [
+            f"memory_rank={memory_rank}",
+            f"window={kind}",
+            f"session_date={session_date}",
+            f"question_overlap={question_overlap}",
+            f"date_candidate_count={len(date_candidates)}",
+            f"snippet={snippet}",
+        ]
+        if date_candidates:
+            details.insert(5, f"date_candidates={','.join(date_candidates)}")
+        line = "- " + "; ".join(details)
+        if remaining_chars:
+            if len(line) > remaining_chars:
+                if remaining_chars < 160:
+                    break
+                line = line[:remaining_chars] + "\n[...window truncated...]"
+            remaining_chars -= len(line)
+        lines.append(line)
+        if remaining_chars <= 0:
+            break
     return lines
 
 
@@ -3070,6 +3358,7 @@ def build_answer_messages(
     total_max_chars: int | None = None,
     temporal_facts: str | None = None,
     bundle_dataset: str | None = None,
+    locomo_evidence_windows: bool = False,
     beam_evidence_windows: bool = False,
     beam_answer_contract: bool = False,
     beam_structured_evidence: str | None = None,
@@ -3081,8 +3370,10 @@ def build_answer_messages(
 ) -> list[dict[str, str]]:
     memory_lines = []
     selected_memories = memories[: max(max_memories, 0)] if max_memories is not None else memories
+    is_locomo = is_locomo_question(question, bundle_dataset)
     is_beam = is_beam_question(question, bundle_dataset)
     is_longmemeval = is_longmemeval_question(question, bundle_dataset)
+    locomo_question = locomo_evidence_windows and is_locomo
     beam_question = beam_evidence_windows and is_beam
     beam_contract_question = beam_answer_contract and is_beam and not beam_category_synthesis
     beam_structured_question = bool(beam_structured_evidence and beam_structured_evidence.strip()) and is_beam
@@ -3092,7 +3383,9 @@ def build_answer_messages(
     longmemeval_structured_question = (
         bool(longmemeval_structured_evidence and longmemeval_structured_evidence.strip()) and is_longmemeval
     )
-    if beam_question:
+    if locomo_question:
+        terms = query_terms_for_excerpt(question)
+    elif beam_question:
         terms = beam_question_terms(question)
     elif longmemeval_question:
         terms = longmemeval_question_terms(question)
@@ -3102,6 +3395,8 @@ def build_answer_messages(
     effective_memory_max_chars = memory_max_chars
     if temporal_question and effective_memory_max_chars is None:
         effective_memory_max_chars = TEMPORAL_DEFAULT_MEMORY_MAX_CHARS
+    if locomo_question and effective_memory_max_chars is None:
+        effective_memory_max_chars = LOCOMO_DEFAULT_MEMORY_MAX_CHARS
     if beam_question and effective_memory_max_chars is None:
         effective_memory_max_chars = 1200
     if longmemeval_question and effective_memory_max_chars is None:
@@ -3109,8 +3404,19 @@ def build_answer_messages(
     if effective_memory_max_chars is not None:
         effective_memory_max_chars = max(0, effective_memory_max_chars - RETRIEVED_MEMORY_TAG_OVERHEAD_CHARS)
     beam_window_lines: list[str] = []
+    locomo_window_lines: list[str] = []
     longmemeval_window_lines: list[str] = []
     memory_budget = max(total_max_chars, 0) if total_max_chars is not None else None
+    if locomo_question:
+        locomo_window_budget = LOCOMO_DEFAULT_MAX_CHARS
+        if total_max_chars is not None:
+            locomo_window_budget = max(0, int(max(total_max_chars, 0)))
+            memory_budget = max(0, int(max(total_max_chars, 0) * 0.06))
+        locomo_window_lines = locomo_evidence_window_lines(
+            question,
+            selected_memories,
+            max_chars=locomo_window_budget,
+        )
     if beam_question:
         beam_window_budget = BEAM_DEFAULT_MAX_CHARS
         if total_max_chars is not None:
@@ -3148,6 +3454,8 @@ def build_answer_messages(
                 raw_memory_text,
                 min(effective_memory_max_chars or 700, 700),
             )
+        elif locomo_question:
+            memory_text = excerpt_memory_text(raw_memory_text, terms, effective_memory_max_chars)
         else:
             memory_text = excerpt_memory_text(raw_memory_text, terms, effective_memory_max_chars)
         line = f"{prefix}{memory_text}"
@@ -3178,11 +3486,28 @@ def build_answer_messages(
             "",
             *(
                 [
+                    "LOCOMO evidence windows:",
+                    "\n".join(locomo_window_lines) if locomo_window_lines else "(none)",
+                    "",
+                    "LOCOMO guidance:",
+                    "Use evidence windows first. For multi-hop questions, combine facts across different memory ranks and do not stop at the first matching snippet.",
+                    "",
+                    "LOCOMO answer format:",
+                    "- Return only the direct answer phrase, date, entity, or compact list requested by the question.",
+                    "- Do not write an explanation, evidence note, or narrative unless the question explicitly asks for one.",
+                    "- For who/what/where/which questions, copy the exact supported entity or value from the strongest relevant evidence.",
+                    "- For how many/count questions, count distinct supported events in the requested date range and answer only the number.",
+                    "- For temporal questions, prefer the resolved candidate date or exact stated date and omit unrelated event description.",
+                    "- If evidence uses phrases like a few days ago or last weekend, anchor that phrase to session_date metadata instead of saying there is not enough information.",
+                    "",
+                ]
+                if locomo_question
+                else []
+            ),
+            *(
+                [
                     "Temporal candidate dates:",
                     "\n".join(temporal_candidate_date_lines(question, selected_memories)) if selected_memories else "(none)",
-                    "",
-                    "Temporal timeline:",
-                    "\n".join(temporal_timeline_lines(question, selected_memories)) if selected_memories else "(none)",
                     "",
                 ]
                 if temporal_question
@@ -3190,11 +3515,29 @@ def build_answer_messages(
             ),
             *(
                 [
-                    "Extracted temporal facts:",
+                    "Temporal timeline:",
+                    "\n".join(temporal_timeline_lines(question, selected_memories)) if selected_memories else "(none)",
+                    "",
+                ]
+                if temporal_question and not locomo_question
+                else []
+            ),
+            *(
+                [
+                    "Use LOCOMO evidence windows first; use Retrieved memories only to verify details.",
+                    "For multi-hop questions, synthesize the final answer from all relevant windows, including lower-ranked survey windows.",
+                    "Keep the final answer to the shortest exact value that satisfies the question.",
+                ]
+                if locomo_question
+                else []
+            ),
+            *(
+                [
+                    "Extracted evidence facts:" if locomo_question else "Extracted temporal facts:",
                     temporal_facts.strip() if temporal_facts and temporal_facts.strip() else "(none)",
                     "",
                 ]
-                if temporal_question and temporal_facts
+                if (temporal_question or locomo_question) and temporal_facts
                 else []
             ),
             *(
@@ -3278,7 +3621,7 @@ def build_answer_messages(
                     "Temporal evidence map:",
                     "\n".join(temporal_evidence_map_lines(selected_memories)) if selected_memories else "(none)",
                 ]
-                if temporal_question
+                if temporal_question and not locomo_question
                 else []
             ),
             "",
@@ -3364,6 +3707,8 @@ def build_temporal_fact_messages(
     max_memories: int | None = None,
     memory_max_chars: int | None = None,
     total_max_chars: int | None = None,
+    bundle_dataset: str | None = None,
+    locomo_evidence_windows: bool = False,
 ) -> list[dict[str, str]]:
     user = build_answer_messages(
         question,
@@ -3371,13 +3716,22 @@ def build_temporal_fact_messages(
         max_memories=max_memories,
         memory_max_chars=memory_max_chars,
         total_max_chars=total_max_chars,
+        bundle_dataset=bundle_dataset,
+        locomo_evidence_windows=locomo_evidence_windows,
     )[1]["content"]
-    user += "\n\nReturn only compact bullet facts. Include dates, relative-date resolutions, ordering, people/items, and uncertainty. Do not answer the benchmark question yet."
+    if locomo_evidence_windows and is_locomo_question(question, bundle_dataset):
+        user += (
+            "\n\nReturn only compact bullet facts. Include dates, relative-date resolutions, ordering, "
+            "people/items, cross-memory links needed for multi-hop questions, and uncertainty. "
+            "Do not answer the benchmark question yet."
+        )
+    else:
+        user += "\n\nReturn only compact bullet facts. Include dates, relative-date resolutions, ordering, people/items, and uncertainty. Do not answer the benchmark question yet."
     return [
         {
             "role": "system",
             "content": system_prompt_with_untrusted_rule(
-                "Extract temporal facts from retrieved memories. Be compact, concrete, and evidence-bound."
+                "Extract evidence facts from retrieved memories. Be compact, concrete, and evidence-bound."
             ),
         },
         {"role": "user", "content": user},
@@ -3565,12 +3919,13 @@ def default_openai_compatible_post(
                 data = json.loads(response.read().decode("utf-8"))
             break
         except urllib.error.HTTPError as exc:
-            if exc.code != 429 or attempt >= max(retries, 0):
-                raise
             try:
-                exc.read()
+                error_body = exc.read().decode("utf-8", errors="replace")
             except Exception:
-                pass
+                error_body = ""
+            if exc.code != 429 or attempt >= max(retries, 0):
+                message = f"HTTP Error {exc.code}: {error_body or exc.reason or 'provider request failed'}"
+                raise OpenAICompatibleHTTPError(exc.code, message) from exc
             retry_after = None
             try:
                 retry_after = exc.headers.get("Retry-After")
@@ -3650,6 +4005,8 @@ def add_temperature(
 ) -> dict[str, Any]:
     if not config.omit_temperature:
         payload["temperature"] = 0
+    if config.reasoning_effort:
+        payload["reasoning_effort"] = config.reasoning_effort
     output_limit = config.answer_output_tokens if max_completion_tokens is None else max_completion_tokens
     if output_limit and output_limit > 0:
         payload["max_completion_tokens"] = int(output_limit)
@@ -3750,6 +4107,33 @@ def beam_window_counts(question: dict[str, Any], memories: list[dict[str, Any]])
     for row in memories:
         total += len(split_beam_memory_windows(str(row.get("memory") or "")))
     return total, selected
+
+
+def locomo_public_diagnostics(
+    question: dict[str, Any],
+    memories: list[dict[str, Any]],
+    answer_messages: list[dict[str, str]],
+    extracted_facts: str = "",
+) -> dict[str, Any]:
+    prompt_text = "\n".join(str(message.get("content") or "") for message in answer_messages)
+    prompt_lowered = prompt_text.lower()
+    question_terms = query_terms_for_excerpt(question)
+    relative_resolution_count = 0
+    for row in memories:
+        metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+        relative_resolution_count += len(resolve_relative_terms(str(row.get("memory") or ""), str(metadata.get("timestamp") or "")))
+    return {
+        "locomo_prompt_chars": prompt_chars(answer_messages),
+        "locomo_evidence_window_count": len(locomo_evidence_window_lines(question, memories)),
+        "locomo_question_term_count": len(question_terms),
+        "locomo_prompt_question_term_hits": sum(1 for term in question_terms if term and term in prompt_lowered),
+        "locomo_temporal_candidate_date_count": len(temporal_candidate_date_lines(question, memories)) if is_temporal_question(question) else 0,
+        "locomo_temporal_timeline_count": len(temporal_timeline_lines(question, memories)) if is_temporal_question(question) else 0,
+        "locomo_relative_resolution_count": relative_resolution_count,
+        "locomo_extracted_facts": bool(str(extracted_facts or "").strip()),
+        "locomo_extracted_facts_hash": stable_hash(extracted_facts) if str(extracted_facts or "").strip() else "",
+        "locomo_first_hit_bucket": first_hit_bucket(first_hit_rank(question, len(memories))),
+    }
 
 
 def build_beam_evidence_diagnostic(
@@ -3894,6 +4278,7 @@ def run_openai_compatible(
                 "planned_questions": len(selected),
                 "selected_questions": 0,
                 "retrieval_backend": str(bundle.get("retrieval_backend") or "kontext"),
+                "reasoning_effort": config.reasoning_effort,
                 "estimated_llm_calls": calls,
                 "estimated_tokens": estimated_tokens,
                 "estimated_cost_usd": cost_from_tokens(estimated_tokens, config.prices),
@@ -3924,6 +4309,7 @@ def run_openai_compatible(
             "planned_questions": len(selected),
             "selected_questions": len(question_rows),
             "retrieval_backend": str(bundle.get("retrieval_backend") or "kontext"),
+            "reasoning_effort": config.reasoning_effort,
             "estimated_llm_calls": calls,
             "estimated_tokens": estimated_tokens,
             "estimated_cost_usd": cost_from_tokens(estimated_tokens, config.prices),
@@ -3965,6 +4351,8 @@ def run_openai_compatible(
             beam_answer_selected_candidate_kind = ""
             beam_extractive_candidate_used = False
             beam_state_direct_candidate_used = False
+            beam_direct_span_candidate_used = False
+            beam_direct_span_candidate_fused = False
             beam_ranked_state_memory_candidate_used = False
             beam_typed_projection_candidate_used = False
             beam_retrieved_excerpt_direct_bypass_used = False
@@ -3979,6 +4367,8 @@ def run_openai_compatible(
                             max_memories=config.answer_max_memories,
                             memory_max_chars=config.answer_memory_max_chars,
                             total_max_chars=config.answer_total_max_chars,
+                            bundle_dataset=str(bundle.get("dataset") or ""),
+                            locomo_evidence_windows=config.locomo_evidence_windows,
                         ),
                     },
                     config,
@@ -4012,6 +4402,11 @@ def run_openai_compatible(
                 structured_evidence = str(structured_response.get("text") or "")
             is_beam = is_beam_question(question, str(bundle.get("dataset") or ""))
             beam_current_state_path = is_beam and is_beam_current_state_question(question)
+            beam_selector_enabled_for_question = (
+                config.beam_answer_candidate_selector
+                and is_beam
+                and beam_answer_selector_question_path(question)
+            )
             if is_beam and not beam_current_state_path and (
                 config.beam_state_reducer
                 or config.beam_state_verifier
@@ -4185,7 +4580,7 @@ def run_openai_compatible(
                     )
             else:
                 verified_answer = ""
-            if verified_answer:
+            if verified_answer and not beam_selector_enabled_for_question:
                 generated_answer = verified_answer
                 beam_direct_answer_used = True
             elif (
@@ -4194,6 +4589,7 @@ def run_openai_compatible(
                 beam_current_state_path
                 and config.beam_state_ledger
                 and beam_state_ledger_events_rows
+                and not config.beam_answer_candidate_selector
                 and beam_direct_answer_bypass_reason_value
                 in {
                     "verifier_valid_broad_support",
@@ -4228,6 +4624,7 @@ def run_openai_compatible(
                     return provider_failure(exc, question, top_k)
                 usage_rows.append(answer_response)
                 generated_answer = str(answer_response.get("text") or "")
+                beam_state_used_in_answer_prompt = True
                 beam_focused_state_answer_used = True
             else:
                 suppress_unverified_state = (
@@ -4235,7 +4632,7 @@ def run_openai_compatible(
                     and config.beam_state_verifier
                     and beam_current_state_path
                     and not verified_answer
-                    and bool(beam_direct_answer_bypass_reason_value)
+                    and beam_should_suppress_state_prompt(beam_direct_answer_bypass_reason_value)
                 )
                 beam_state_for_answer = None if suppress_unverified_state else beam_resolved_state
                 beam_state_used_in_answer_prompt = isinstance(beam_state_for_answer, dict)
@@ -4247,6 +4644,7 @@ def run_openai_compatible(
                     total_max_chars=config.answer_total_max_chars,
                     temporal_facts=temporal_facts,
                     bundle_dataset=str(bundle.get("dataset") or ""),
+                    locomo_evidence_windows=config.locomo_evidence_windows,
                     beam_evidence_windows=config.beam_evidence_windows,
                     beam_answer_contract=config.beam_answer_contract,
                     beam_structured_evidence=structured_evidence,
@@ -4269,7 +4667,12 @@ def run_openai_compatible(
                     return provider_failure(exc, question, top_k)
                 usage_rows.append(answer_response)
                 generated_answer = str(answer_response.get("text") or "")
-                if config.beam_retrieved_excerpt_direct_bypass and is_beam and beam_current_state_path:
+                if (
+                    config.beam_retrieved_excerpt_direct_bypass
+                    and is_beam
+                    and beam_current_state_path
+                    and not config.beam_answer_candidate_selector
+                ):
                     retrieved_excerpt_answer = beam_retrieved_excerpt_answer(question, memories)
                     if retrieved_excerpt_answer:
                         generated_answer = retrieved_excerpt_answer
@@ -4284,11 +4687,8 @@ def run_openai_compatible(
                             "confidence": 1.0,
                         }
                 if (
-                    config.beam_answer_candidate_selector
-                    and is_beam
-                    and beam_answer_selector_question_path(question)
+                    beam_selector_enabled_for_question
                     and not beam_retrieved_excerpt_direct_bypass_used
-                    and not verified_answer
                     and (
                         (
                             beam_current_state_path
@@ -4310,6 +4710,7 @@ def run_openai_compatible(
                             total_max_chars=config.answer_total_max_chars,
                             temporal_facts=temporal_facts,
                             bundle_dataset=str(bundle.get("dataset") or ""),
+                            locomo_evidence_windows=config.locomo_evidence_windows,
                             beam_evidence_windows=config.beam_evidence_windows,
                             beam_answer_contract=config.beam_answer_contract,
                             beam_structured_evidence=structured_evidence,
@@ -4395,6 +4796,19 @@ def run_openai_compatible(
                                     "answer": state_direct_answer,
                                 }
                             )
+                    if config.beam_direct_span_candidate and (
+                        beam_current_state_path
+                        or str(question.get("category") or "").lower() == "information_extraction"
+                    ):
+                        direct_span_answer = beam_direct_span_candidate_answer(question, memories)
+                        if direct_span_answer:
+                            candidates.append(
+                                {
+                                    "id": f"candidate_{len(candidates) + 1}",
+                                    "kind": "direct_span",
+                                    "answer": direct_span_answer,
+                                }
+                            )
                     if config.beam_typed_projection_candidate and beam_current_state_path:
                         typed_projection_answer = beam_typed_projection_candidate_answer(question, memories)
                         if typed_projection_answer:
@@ -4434,7 +4848,7 @@ def run_openai_compatible(
                                 }
                             )
                     beam_answer_candidate_count = len(candidates)
-                    beam_answer_candidate_summaries = beam_answer_candidate_public_summaries(candidates)
+                    beam_answer_candidate_summaries = beam_answer_candidate_public_summaries(candidates, question)
                     forced_ranked_index = 0
                     if config.beam_ranked_state_memory_direct_bypass and config.beam_ranked_state_memory_candidate:
                         for index, candidate in enumerate(candidates, start=1):
@@ -4469,7 +4883,7 @@ def run_openai_compatible(
                             "reason_code": "information_extraction_direct_bypass",
                             "confidence": 1.0,
                         }
-                    elif trusted_typed_projection_index:
+                    elif trusted_typed_projection_index and not config.beam_direct_span_candidate:
                         beam_answer_selector_result = {
                             "parser_status": "typed_projection_direct_bypass",
                             "selected_id": f"candidate_{trusted_typed_projection_index}",
@@ -4534,6 +4948,33 @@ def run_openai_compatible(
                             config.beam_state_direct_candidate
                             and selected_candidate.get("kind") == "state_direct"
                         )
+                        beam_direct_span_candidate_used = bool(
+                            config.beam_direct_span_candidate
+                            and selected_candidate.get("kind") == "direct_span"
+                        )
+                        if (
+                            config.beam_direct_span_candidate
+                            and str(question.get("category") or "").lower() == "knowledge_update"
+                            and selected_candidate.get("kind") in {"normal", "alternate", "extractive", "ranked_state_memory"}
+                        ):
+                            direct_span_answer = next(
+                                (
+                                    str(candidate.get("answer") or "").strip()
+                                    for candidate in candidates
+                                    if candidate.get("kind") == "direct_span" and str(candidate.get("answer") or "").strip()
+                                ),
+                                "",
+                            )
+                            if direct_span_answer and normalized_beam_candidate_answer(direct_span_answer) not in normalized_beam_candidate_answer(generated_answer):
+                                generated_answer = "\n".join(
+                                    part
+                                    for part in [
+                                        str(generated_answer or "").strip(),
+                                        f"Current evidence: {direct_span_answer}",
+                                    ]
+                                    if part
+                                )
+                                beam_direct_span_candidate_fused = True
                         beam_ranked_state_memory_candidate_used = bool(
                             config.beam_ranked_state_memory_candidate
                             and selected_candidate.get("kind") == "ranked_state_memory"
@@ -4581,6 +5022,16 @@ def run_openai_compatible(
             }
             if config.beam_evidence_windows and is_beam_question(question, str(bundle.get("dataset") or "")):
                 cutoff_results[keyed]["beam_evidence_windows"] = True
+            if config.locomo_evidence_windows and is_locomo_question(question, str(bundle.get("dataset") or "")):
+                cutoff_results[keyed]["locomo_evidence_windows"] = True
+                cutoff_results[keyed].update(
+                    locomo_public_diagnostics(
+                        question,
+                        memories,
+                        answer_messages,
+                        temporal_facts,
+                    )
+                )
             if config.beam_answer_contract and is_beam_question(question, str(bundle.get("dataset") or "")):
                 cutoff_results[keyed]["beam_answer_contract"] = True
             if structured_evidence and is_beam_question(question, str(bundle.get("dataset") or "")):
@@ -4693,6 +5144,11 @@ def run_openai_compatible(
             if config.beam_state_direct_candidate and is_beam_question(question, str(bundle.get("dataset") or "")):
                 cutoff_results[keyed]["beam_state_direct_candidate"] = True
                 cutoff_results[keyed]["beam_state_direct_candidate_used"] = beam_state_direct_candidate_used
+            if config.beam_direct_span_candidate and is_beam_question(question, str(bundle.get("dataset") or "")):
+                cutoff_results[keyed]["beam_direct_span_candidate"] = True
+                cutoff_results[keyed]["beam_direct_span_candidate_used"] = beam_direct_span_candidate_used
+                if beam_direct_span_candidate_fused:
+                    cutoff_results[keyed]["beam_direct_span_candidate_fused"] = True
             if config.beam_ranked_state_memory_candidate and is_beam_question(question, str(bundle.get("dataset") or "")):
                 cutoff_results[keyed]["beam_ranked_state_memory_candidate"] = True
                 cutoff_results[keyed]["beam_ranked_state_memory_candidate_used"] = beam_ranked_state_memory_candidate_used
@@ -4740,6 +5196,8 @@ def run_openai_compatible(
                     "beam_answer_candidate_count": beam_answer_candidate_count,
                     "beam_extractive_candidate_used": beam_extractive_candidate_used,
                     "beam_state_direct_candidate_used": beam_state_direct_candidate_used,
+                    "beam_direct_span_candidate_used": beam_direct_span_candidate_used,
+                    "beam_direct_span_candidate_fused": beam_direct_span_candidate_fused,
                     "beam_ranked_state_memory_candidate_used": beam_ranked_state_memory_candidate_used,
                     "beam_typed_projection_candidate_used": beam_typed_projection_candidate_used,
                     "beam_retrieved_excerpt_direct_bypass_used": beam_retrieved_excerpt_direct_bypass_used,
@@ -4779,6 +5237,7 @@ def run_openai_compatible(
         "top_k_values": top_k_values,
         "answerer_model": config.answerer_model,
         "judge_model": config.judge_model,
+        "reasoning_effort": config.reasoning_effort,
         "judge_units_per_question": format_call_count(config.judge_units_per_question),
         "estimated_llm_calls": calls,
         "estimated_tokens": estimated_tokens,
@@ -4819,6 +5278,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--answer-memory-max-chars", type=int)
     parser.add_argument("--answer-total-max-chars", type=int)
     parser.add_argument("--temporal-fact-extraction", action="store_true")
+    parser.add_argument("--locomo-evidence-windows", action="store_true")
     parser.add_argument("--beam-evidence-windows", action="store_true")
     parser.add_argument("--beam-answer-contract", action="store_true")
     parser.add_argument("--beam-structured-evidence", action="store_true")
@@ -4833,6 +5293,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--beam-answer-candidate-selector", action="store_true")
     parser.add_argument("--beam-extractive-candidate", action="store_true")
     parser.add_argument("--beam-state-direct-candidate", action="store_true")
+    parser.add_argument("--beam-direct-span-candidate", action="store_true")
     parser.add_argument("--beam-ranked-state-memory-candidate", action="store_true")
     parser.add_argument("--beam-ranked-state-memory-direct-bypass", action="store_true")
     parser.add_argument("--beam-retrieved-excerpt-direct-bypass", action="store_true")
@@ -4847,6 +5308,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--beam-diagnostic-output", help="Optional sanitized no-call BEAM evidence-window diagnostic report.")
     parser.add_argument("--private-debug-output", help="Private raw debug report path under /opt/kontext/private.")
     parser.add_argument("--omit-temperature", action="store_true")
+    parser.add_argument("--reasoning-effort")
     parser.add_argument("--verification-output", help="Optional sanitized acceptance-gate report for this run.")
     parser.add_argument("--verify-cutoff", type=int, default=50)
     parser.add_argument("--verify-min-accuracy", type=float, default=0.8)
@@ -4978,6 +5440,7 @@ def main(argv: list[str] | None = None) -> int:
                     answer_memory_max_chars=args.answer_memory_max_chars,
                     answer_total_max_chars=args.answer_total_max_chars,
                     temporal_fact_extraction=args.temporal_fact_extraction,
+                    locomo_evidence_windows=args.locomo_evidence_windows,
                     beam_evidence_windows=args.beam_evidence_windows,
                     beam_answer_contract=args.beam_answer_contract,
                     beam_structured_evidence=args.beam_structured_evidence,
@@ -4992,6 +5455,7 @@ def main(argv: list[str] | None = None) -> int:
                     beam_answer_candidate_selector=args.beam_answer_candidate_selector,
                     beam_extractive_candidate=args.beam_extractive_candidate,
                     beam_state_direct_candidate=args.beam_state_direct_candidate,
+                    beam_direct_span_candidate=args.beam_direct_span_candidate,
                     beam_ranked_state_memory_candidate=args.beam_ranked_state_memory_candidate,
                     beam_ranked_state_memory_direct_bypass=args.beam_ranked_state_memory_direct_bypass,
                     beam_retrieved_excerpt_direct_bypass=args.beam_retrieved_excerpt_direct_bypass,
@@ -5005,6 +5469,7 @@ def main(argv: list[str] | None = None) -> int:
                     longmemeval_structured_evidence=args.longmemeval_structured_evidence,
                     private_debug_output=args.private_debug_output,
                     omit_temperature=args.omit_temperature,
+                    reasoning_effort=args.reasoning_effort,
                 ),
                 max_questions=args.max_questions,
                 question_offset=args.question_offset,

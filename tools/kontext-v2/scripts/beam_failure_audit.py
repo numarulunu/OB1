@@ -239,6 +239,11 @@ def class_for_failure(
     debug_record: dict[str, Any] | None,
     cutoff: int,
 ) -> str:
+    if result.get("beam_direct_span_candidate") and int(result.get("beam_answer_candidate_count") or 0) > 0:
+        if result.get("beam_direct_span_candidate_used"):
+            return "beam_direct_span_candidate_wrong"
+        return "beam_direct_span_candidate_not_selected"
+
     if result.get("beam_deterministic_state_resolver"):
         status = str(result.get("beam_state_resolver_status") or "").strip()
         if status == "resolved" and result.get("beam_direct_answer_used"):
@@ -418,6 +423,8 @@ def build_audit_report(
         "deterministic_resolver_not_used": 0,
         "beam_extractive_candidate_wrong": 0,
         "beam_extractive_candidate_not_selected": 0,
+        "beam_direct_span_candidate_wrong": 0,
+        "beam_direct_span_candidate_not_selected": 0,
         "beam_ranked_state_memory_candidate_wrong": 0,
         "beam_ranked_state_memory_candidate_not_selected": 0,
         "beam_typed_projection_candidate_wrong": 0,

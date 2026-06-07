@@ -245,10 +245,32 @@ def build_execution_plan(
 def verification_actual_cost(path: str | None) -> float:
     if not path:
         return 0.0
-    try:
-        payload = load_json(path)
-    except (OSError, ValueError, json.JSONDecodeError):
+    candidate_paths = [Path(path)]
+    primary = candidate_paths[0]
+    candidate_paths.append(primary.with_name(f"{primary.stem}.failed-judged-benchmark-verification.json"))
+    payload: dict[str, Any] | None = None
+    for candidate in candidate_paths:
+        try:
+            payload = load_json(str(candidate))
+            break
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+    if payload is None:
         return 0.0
+    actual = payload.get("actual_cost_usd")
+    if isinstance(actual, dict):
+        actual_value = safe_float(actual.get("total_usd"))
+        if actual_value:
+            return actual_value
+    actual_value = safe_float(actual)
+    if actual_value:
+        return actual_value
+    try:
+        gate_value = safe_float(payload.get("gates", {}).get("cost", {}).get("actual_cost_usd"))
+    except AttributeError:
+        gate_value = 0.0
+    if gate_value:
+        return gate_value
     return safe_float(payload.get("estimated_cost_usd"))
 
 

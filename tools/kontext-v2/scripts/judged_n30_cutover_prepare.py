@@ -18,6 +18,48 @@ MAX_TOTAL_COST_CEILING_USD = 1.00
 MIN_QUESTIONS_PER_SUITE = 30
 SCRIPT_DIR = Path(__file__).resolve().parent
 
+ANSWER_LIMIT_FLAGS = (
+    ("answer_max_memories", "--answer-max-memories"),
+    ("answer_memory_max_chars", "--answer-memory-max-chars"),
+    ("answer_total_max_chars", "--answer-total-max-chars"),
+)
+
+LOCOMO_APPROVAL_FLAGS = (
+    ("locomo_evidence_windows", "--locomo-evidence-windows"),
+)
+
+BEAM_APPROVAL_FLAGS = (
+    ("beam_evidence_windows", "--beam-evidence-windows"),
+    ("beam_answer_contract", "--beam-answer-contract"),
+    ("beam_structured_evidence", "--beam-structured-evidence"),
+    ("beam_turn_neighborhoods", "--beam-turn-neighborhoods"),
+    ("beam_category_synthesis", "--beam-category-synthesis"),
+    ("beam_state_reducer", "--beam-state-reducer"),
+    ("beam_direct_answer_bypass", "--beam-direct-answer-bypass"),
+    ("beam_broad_support_bypass", "--beam-broad-support-bypass"),
+    ("beam_disable_corrected_bypass", "--beam-disable-corrected-bypass"),
+    ("beam_strict_direct_bypass", "--beam-strict-direct-bypass"),
+    ("beam_verified_state_only", "--beam-verified-state-only"),
+    ("beam_answer_candidate_selector", "--beam-answer-candidate-selector"),
+    ("beam_extractive_candidate", "--beam-extractive-candidate"),
+    ("beam_state_direct_candidate", "--beam-state-direct-candidate"),
+    ("beam_direct_span_candidate", "--beam-direct-span-candidate"),
+    ("beam_ranked_state_memory_candidate", "--beam-ranked-state-memory-candidate"),
+    ("beam_ranked_state_memory_direct_bypass", "--beam-ranked-state-memory-direct-bypass"),
+    ("beam_retrieved_excerpt_direct_bypass", "--beam-retrieved-excerpt-direct-bypass"),
+    ("beam_typed_projection_candidate", "--beam-typed-projection-candidate"),
+    ("beam_memory_atomizer", "--beam-memory-atomizer"),
+    ("beam_state_ledger", "--beam-state-ledger"),
+    ("beam_state_verifier", "--beam-state-verifier"),
+    ("beam_deterministic_state_resolver", "--beam-deterministic-state-resolver"),
+    ("beam_focused_state_answer", "--beam-focused-state-answer"),
+)
+
+LONGMEMEVAL_APPROVAL_FLAGS = (
+    ("longmemeval_evidence_windows", "--longmemeval-evidence-windows"),
+    ("longmemeval_structured_evidence", "--longmemeval-structured-evidence"),
+)
+
 
 @dataclass(frozen=True)
 class SuiteSpec:
@@ -246,6 +288,7 @@ def run_predict_suite(spec: SuiteSpec, args: argparse.Namespace, database_url: s
             run_id=spec.run_id,
             top_k_values=parse_cutoffs(args.cutoffs),
             dataset_url=args.locomo_dataset_url,
+            conversations=args.locomo_conversations,
             max_questions=int(args.max_questions_per_suite),
             judged_bundle_output=str(spec.private_bundle),
         )
@@ -364,7 +407,40 @@ def approval_command(spec: SuiteSpec, args: argparse.Namespace, base_url: str) -
         argv.extend(["--mode", spec.mode])
     if spec.judge_units_per_question is not None:
         argv.extend(["--judge-units-per-question", str(spec.judge_units_per_question)])
+    for attr, flag in ANSWER_LIMIT_FLAGS:
+        value = getattr(args, attr, None)
+        if value is not None:
+            argv.extend([flag, str(value)])
+    if getattr(args, "omit_temperature", False):
+        argv.append("--omit-temperature")
+    if getattr(args, "reasoning_effort", None):
+        argv.extend(["--reasoning-effort", str(args.reasoning_effort)])
+    if spec.name == "locomo30" and getattr(args, "temporal_fact_extraction", False):
+        argv.append("--temporal-fact-extraction")
+    if spec.name == "locomo30":
+        for attr, flag in LOCOMO_APPROVAL_FLAGS:
+            if getattr(args, attr, False):
+                argv.append(flag)
+    if spec.name == "longmemeval30":
+        for attr, flag in LONGMEMEVAL_APPROVAL_FLAGS:
+            if getattr(args, attr, False):
+                argv.append(flag)
+    if spec.name == "beam30":
+        for attr, flag in BEAM_APPROVAL_FLAGS:
+            if getattr(args, attr, False):
+                argv.append(flag)
     return argv
+
+
+def failed_mock_verification_path(path: Path) -> Path:
+    return path.with_name(f"{path.stem}.failed-judged-benchmark-verification.json")
+
+
+def readiness_mock_verification_name(spec: SuiteSpec) -> str:
+    failed_path = failed_mock_verification_path(spec.mock_verification)
+    if failed_path.exists():
+        return failed_path.name
+    return spec.mock_verification.name
 
 
 def readiness_command(specs: list[SuiteSpec], args: argparse.Namespace, output: Path) -> list[str]:
@@ -388,7 +464,7 @@ def readiness_command(specs: list[SuiteSpec], args: argparse.Namespace, output: 
                         spec.private_bundle.name,
                         spec.predict_report.name,
                         spec.mock_run.name,
-                        spec.mock_verification.name,
+                        readiness_mock_verification_name(spec),
                         spec.approval_packet.name,
                     ]
                 ),
@@ -552,6 +628,40 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--answer-output-usd-per-1m", type=float, default=0.40)
     parser.add_argument("--judge-input-usd-per-1m", type=float, default=0.10)
     parser.add_argument("--judge-output-usd-per-1m", type=float, default=0.40)
+    parser.add_argument("--answer-max-memories", type=int)
+    parser.add_argument("--answer-memory-max-chars", type=int)
+    parser.add_argument("--answer-total-max-chars", type=int)
+    parser.add_argument("--temporal-fact-extraction", action="store_true")
+    parser.add_argument("--locomo-evidence-windows", action="store_true")
+    parser.add_argument("--beam-evidence-windows", action="store_true")
+    parser.add_argument("--beam-answer-contract", action="store_true")
+    parser.add_argument("--beam-structured-evidence", action="store_true")
+    parser.add_argument("--beam-turn-neighborhoods", action="store_true")
+    parser.add_argument("--beam-category-synthesis", action="store_true")
+    parser.add_argument("--beam-state-reducer", action="store_true")
+    parser.add_argument("--beam-direct-answer-bypass", action="store_true")
+    parser.add_argument("--beam-broad-support-bypass", action="store_true")
+    parser.add_argument("--beam-disable-corrected-bypass", action="store_true")
+    parser.add_argument("--beam-strict-direct-bypass", action="store_true")
+    parser.add_argument("--beam-verified-state-only", action="store_true")
+    parser.add_argument("--beam-answer-candidate-selector", action="store_true")
+    parser.add_argument("--beam-extractive-candidate", action="store_true")
+    parser.add_argument("--beam-state-direct-candidate", action="store_true")
+    parser.add_argument("--beam-direct-span-candidate", action="store_true")
+    parser.add_argument("--beam-ranked-state-memory-candidate", action="store_true")
+    parser.add_argument("--beam-ranked-state-memory-direct-bypass", action="store_true")
+    parser.add_argument("--beam-retrieved-excerpt-direct-bypass", action="store_true")
+    parser.add_argument("--beam-typed-projection-candidate", action="store_true")
+    parser.add_argument("--beam-memory-atomizer", action="store_true")
+    parser.add_argument("--beam-state-ledger", action="store_true")
+    parser.add_argument("--beam-state-verifier", action="store_true")
+    parser.add_argument("--beam-deterministic-state-resolver", action="store_true")
+    parser.add_argument("--beam-focused-state-answer", action="store_true")
+    parser.add_argument("--longmemeval-evidence-windows", action="store_true")
+    parser.add_argument("--longmemeval-structured-evidence", action="store_true")
+    parser.add_argument("--omit-temperature", action="store_true")
+    parser.add_argument("--reasoning-effort")
+    parser.add_argument("--locomo-conversations")
     parser.add_argument("--locomo-dataset-url", default="https://raw.githubusercontent.com/snap-research/locomo/main/data/locomo10.json")
     parser.add_argument(
         "--longmemeval-dataset-url",

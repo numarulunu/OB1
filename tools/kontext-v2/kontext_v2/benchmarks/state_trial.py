@@ -181,10 +181,28 @@ def _state_key(category: str, question_hash: str) -> str:
 
 
 def _judged_bundle_question_hash(question: dict[str, Any]) -> str:
-    stable_id = str(question.get("question_id") or "").strip()
-    if stable_id:
-        return stable_hash(stable_id)[:16]
+    existing = str(question.get("question_hash") or "").strip()
+    if existing:
+        return existing[:16]
     return stable_hash(str(question.get("question") or ""))[:16]
+
+
+def _judged_run_question_hashes(run: dict[str, Any] | None) -> set[str] | None:
+    if not isinstance(run, dict):
+        return None
+    hashes: set[str] = set()
+    for key in ("questions", "selected_questions"):
+        rows = run.get(key)
+        if not isinstance(rows, list):
+            continue
+        for row in rows:
+            if isinstance(row, dict):
+                value = str(row.get("question_hash") or "").strip()
+            else:
+                value = str(row or "").strip()
+            if value:
+                hashes.add(value[:16])
+    return hashes or None
 
 
 def _state_event_type_for_category(category: str) -> str:
@@ -390,6 +408,7 @@ def build_judged_bundle_state_events(
     top_k: int | str = 20,
     extractor_version: str = DEFAULT_EXTRACTOR_VERSION,
     categories: set[str] | None = None,
+    selected_question_hashes: set[str] | None = None,
     max_events_per_question: int = 12,
     event_granularity: str = "turn",
 ) -> BenchmarkStatePlan:
@@ -413,6 +432,8 @@ def build_judged_bundle_state_events(
             continue
 
         q_hash = _judged_bundle_question_hash(question)
+        if selected_question_hashes is not None and q_hash not in selected_question_hashes:
+            continue
         state_key = _state_key(category, q_hash)
         question_events: list[dict[str, Any]] = []
         for memory_rank, row in enumerate(retrieved, start=1):
@@ -1010,6 +1031,45 @@ def run_benchmark_state_trial(
     return _attach_typed_object_summary(report, facts)
 
 
+def _sanitized_judged_proof(verification: dict[str, Any] | None, *, min_questions: int = 0) -> dict[str, Any]:
+    if not isinstance(verification, dict):
+        return {
+            "ok": False,
+            "runs_model_calls": False,
+            "actual_judged_accuracy_proven": False,
+            "raw_payload_hits": 0,
+            "total": 0,
+            "accuracy": 0.0,
+            "completed_calls": 0,
+        }
+    summary = verification.get("summary") if isinstance(verification.get("summary"), dict) else {}
+    gates = verification.get("gates") if isinstance(verification.get("gates"), dict) else {}
+    raw_gate = gates.get("raw_payload") if isinstance(gates.get("raw_payload"), dict) else {}
+    model_gate = gates.get("model_calls") if isinstance(gates.get("model_calls"), dict) else {}
+    question_gate = gates.get("question_count") if isinstance(gates.get("question_count"), dict) else {}
+    total = int(summary.get("total") or question_gate.get("selected_questions") or 0)
+    raw_hits = int(raw_gate.get("hit_count") or verification.get("raw_payload_hits") or 0)
+    completed_calls = int(verification.get("completed_calls") or model_gate.get("completed_calls") or 0)
+    runs_model_calls = verification.get("runs_model_calls") is True or model_gate.get("actual") is True or completed_calls > 0
+    actual_proven = (
+        verification.get("ok") is True
+        and runs_model_calls
+        and completed_calls > 0
+        and raw_hits == 0
+        and total >= int(min_questions or 0)
+    )
+    return {
+        "ok": verification.get("ok") is True,
+        "runs_model_calls": runs_model_calls,
+        "actual_judged_accuracy_proven": actual_proven,
+        "raw_payload_hits": raw_hits,
+        "total": total,
+        "accuracy": round(float(summary.get("accuracy") or 0.0), 4),
+        "avg_score": round(float(summary.get("avg_score") or 0.0), 4),
+        "completed_calls": completed_calls,
+    }
+
+
 def run_judged_bundle_state_trial(
     repo: Any,
     bundle: dict[str, Any],
@@ -1020,6 +1080,8 @@ def run_judged_bundle_state_trial(
     top_k: int | str = 20,
     event_granularity: str = "turn",
     dry_run: bool = False,
+    judged_verification: dict[str, Any] | None = None,
+    selected_question_hashes: set[str] | None = None,
 ) -> dict[str, Any]:
     if not _benchmark_enabled():
         return {
@@ -1040,6 +1102,7 @@ def run_judged_bundle_state_trial(
         top_k=top_k,
         max_events_per_question=int(top_k) if str(event_granularity or "").strip().lower() == "memory" else 12,
         event_granularity=event_granularity,
+        selected_question_hashes=selected_question_hashes,
     )
     if dry_run:
         staged = _dry_run_stage_state_event_proposals(
@@ -1294,6 +1357,7 @@ def run_judged_bundle_state_trial(
         )
 
     counts = repo.state_model_counts(namespace=namespace) if hasattr(repo, "state_model_counts") else {}
+    judged_proof = _sanitized_judged_proof(judged_verification, min_questions=len(plan.questions))
     report = {
         "ok": True,
         "mode": "judged_bundle_state_trial",
@@ -1304,6 +1368,10 @@ def run_judged_bundle_state_trial(
         "extractor_version": extractor_version,
         "event_granularity": str(event_granularity or "turn").strip().lower(),
         "dry_run": bool(dry_run),
+        "runs_model_calls": bool(judged_proof.get("runs_model_calls")),
+        "actual_judged_accuracy_proven": bool(judged_proof.get("actual_judged_accuracy_proven")),
+        "raw_payload_hits": int(judged_proof.get("raw_payload_hits") or 0),
+        "judged_proof": judged_proof,
         "writes_applied": writes_applied,
         "counts": {
             "state_events_planned": len(plan.state_events),
@@ -1422,8 +1490,12 @@ def run_private_bundle_state_trial(
     top_k: int = 20,
     event_granularity: str = "turn",
     dry_run: bool = False,
+    judged_verification_path: str | Path | None = None,
+    judged_run_path: str | Path | None = None,
 ) -> dict[str, Any]:
     bundle = json.loads(Path(private_bundle_path).read_text(encoding="utf-8"))
+    judged_verification = json.loads(Path(judged_verification_path).read_text(encoding="utf-8")) if judged_verification_path else None
+    judged_run = json.loads(Path(judged_run_path).read_text(encoding="utf-8")) if judged_run_path else None
     with psycopg.connect(database_url) as conn:
         apply_schema(conn)
         repo = KontextRepository(conn)
@@ -1436,6 +1508,8 @@ def run_private_bundle_state_trial(
             top_k=top_k,
             event_granularity=event_granularity,
             dry_run=dry_run,
+            judged_verification=judged_verification,
+            selected_question_hashes=_judged_run_question_hashes(judged_run),
         )
     paths = write_state_trial_report(report, output_dir)
     report["report_paths"] = {key: str(value) for key, value in paths.items()}
@@ -1447,6 +1521,8 @@ def main() -> None:
     parser.add_argument("--database-url", required=True)
     parser.add_argument("--fixture-path", default=str(DEFAULT_BEAM_FIXTURE))
     parser.add_argument("--private-bundle-path")
+    parser.add_argument("--judged-verification-path")
+    parser.add_argument("--judged-run-path")
     parser.add_argument("--dataset-path")
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--run-id", required=True)
@@ -1472,6 +1548,8 @@ def main() -> None:
             top_k=args.top_k,
             event_granularity=args.private_event_granularity,
             dry_run=args.dry_run,
+            judged_verification_path=args.judged_verification_path,
+            judged_run_path=args.judged_run_path,
         )
     else:
         report = run_beam_state_trial(
@@ -1491,13 +1569,14 @@ def main() -> None:
             question_types=args.question_types,
             dry_run=args.dry_run,
         )
+    counts = report.get("counts") or {}
     print(
         "beam-state-trial "
-        f"ok={str(report['ok']).lower()} "
-        f"planned={report['counts']['state_events_planned']} "
-        f"projection={report['counts'].get('projection_matched', report['counts'].get('active_answer_overlap_questions', 0))}/"
-        f"{report['counts']['projection_queries']} "
-        f"writes_applied={report['writes_applied']}"
+        f"ok={str(report.get('ok')).lower()} "
+        f"planned={counts.get('state_events_planned', 0)} "
+        f"projection={counts.get('projection_matched', counts.get('active_answer_overlap_questions', 0))}/"
+        f"{counts.get('projection_queries', 0)} "
+        f"writes_applied={report.get('writes_applied', 0)}"
     )
 
 

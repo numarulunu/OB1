@@ -315,6 +315,41 @@ def test_batch_execute_stops_before_next_suite_when_actual_cost_would_exceed_cei
     assert "batch running cost would exceed approved ceiling before longmemeval1" in result["blocked_by"]
 
 
+def test_batch_execute_counts_cost_from_failed_verification_report(tmp_path, monkeypatch):
+    module = load_module()
+    packet = tmp_path / "batch.json"
+    write_batch_packet(packet)
+    payload = json.loads(packet.read_text(encoding="utf-8"))
+    payload["commands"][0]["command_template"] = payload["commands"][0]["command_template"].replace(
+        "/opt/kontext/reports/judged-plans/locomo1-paid-verification.json",
+        str(tmp_path / "locomo1-paid-verification.json"),
+    )
+    packet.write_text(json.dumps(payload), encoding="utf-8")
+    plan = module.build_execution_plan(
+        packet,
+        execute=True,
+        approve_cost=True,
+        max_total_cost_usd=0.02,
+        environ={"OPENAI_API_KEY": "present-but-not-rendered"},
+    )
+
+    def fake_run(argv, capture_output, text, check, timeout):
+        verification_output = Path(module.option_value(argv, "--verification-output"))
+        failed = verification_output.with_name(f"{verification_output.stem}.failed-judged-benchmark-verification.json")
+        write_json(failed, {"gates": {"cost": {"actual_cost_usd": 0.006}}, "estimated_cost_usd": {"total_usd": 0.011}})
+        return SimpleNamespace(returncode=2, stdout="", stderr="")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    result = module.execute_plan(plan, max_runtime_seconds=30)
+
+    assert result["ok"] is False
+    assert result["commands"][0]["status"] == "failed"
+    assert result["commands"][0]["actual_cost_usd"] == 0.006
+    assert result["summary"]["actual_cost_usd"] == 0.006
+    assert "command failed: locomo1" in result["blocked_by"]
+
+
 def test_cli_writes_blocked_execution_plan_without_running(tmp_path, capsys):
     module = load_module()
     packet = tmp_path / "batch.json"
