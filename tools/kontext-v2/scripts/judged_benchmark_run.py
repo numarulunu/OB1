@@ -1585,16 +1585,33 @@ def beam_answer_candidate_public_summaries(
     summaries: list[dict[str, Any]] = []
     ground_terms = beam_ground_truth_terms(question)
     ground_term_count = len(ground_terms)
+    question_terms = beam_question_terms(question) if isinstance(question, dict) else []
+    question_term_count = len(question_terms)
+    specific_terms = beam_specific_state_question_terms(question) if isinstance(question, dict) else []
+    specific_term_count = len(specific_terms)
+    category = str((question or {}).get("category") or "") if isinstance(question, dict) else ""
     for index, candidate in enumerate(candidates, start=1):
         answer = str(candidate.get("answer") or "")
+        answer_terms = set(re.findall(r"[A-Za-z0-9][A-Za-z0-9_-]{2,}", answer.lower()))
         summary = {
             "id": str(candidate.get("id") or f"candidate_{index}")[:40],
             "kind": str(candidate.get("kind") or "unknown")[:40],
             "answer_hash": stable_hash(answer),
             "answer_chars": len(answer),
         }
+        if question_term_count:
+            overlap = sum(1 for term in question_terms if term in answer_terms)
+            summary["question_overlap_terms"] = overlap
+            summary["question_term_count"] = question_term_count
+            summary["question_overlap_ratio"] = round(overlap / question_term_count, 4)
+        if specific_term_count:
+            overlap = sum(1 for term in specific_terms if term in answer_terms)
+            summary["specific_question_overlap_terms"] = overlap
+            summary["specific_question_term_count"] = specific_term_count
+            summary["specific_question_overlap_ratio"] = round(overlap / specific_term_count, 4)
+        if category:
+            summary["state_marker_present"] = beam_state_marker_present(category, answer)
         if ground_term_count:
-            answer_terms = set(re.findall(r"[A-Za-z0-9][A-Za-z0-9_-]{2,}", answer.lower()))
             overlap = sum(1 for term in ground_terms if term in answer_terms)
             summary["ground_truth_overlap_terms"] = overlap
             summary["ground_truth_term_count"] = ground_term_count

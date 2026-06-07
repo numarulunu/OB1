@@ -211,18 +211,41 @@ def safe_candidate_summaries(result: dict[str, Any]) -> list[dict[str, Any]]:
     if not isinstance(rows, list):
         return []
     summaries: list[dict[str, Any]] = []
+    numeric_fields = [
+        "question_overlap_terms",
+        "question_term_count",
+        "question_overlap_ratio",
+        "specific_question_overlap_terms",
+        "specific_question_term_count",
+        "specific_question_overlap_ratio",
+        "ground_truth_overlap_terms",
+        "ground_truth_term_count",
+        "ground_truth_overlap_ratio",
+    ]
     for row in rows:
         if not isinstance(row, dict):
             continue
-        summaries.append(
-            {
-                "id": str(row.get("id") or "")[:40],
-                "kind": str(row.get("kind") or "unknown")[:40],
-                "answer_hash": str(row.get("answer_hash") or "")[:80],
-                "answer_chars": safe_int(row.get("answer_chars")),
-            }
-        )
+        summary = {
+            "id": str(row.get("id") or "")[:40],
+            "kind": str(row.get("kind") or "unknown")[:40],
+            "answer_hash": str(row.get("answer_hash") or "")[:80],
+            "answer_chars": safe_int(row.get("answer_chars")),
+        }
+        for key in numeric_fields:
+            if key in row:
+                value = row.get(key)
+                if key.endswith("_ratio"):
+                    summary[key] = round(float(value or 0.0), 4)
+                else:
+                    summary[key] = safe_int(value)
+        if "state_marker_present" in row:
+            summary["state_marker_present"] = row.get("state_marker_present") is True
+        summaries.append(summary)
     return summaries
+
+
+def safe_list_count(value: Any) -> int:
+    return len(value) if isinstance(value, list) else 0
 
 
 def selected_candidate_kind(result: dict[str, Any], summaries: list[dict[str, Any]]) -> str:
@@ -492,6 +515,15 @@ def build_audit_report(
                 "generated_answer_hash": str(result.get("generated_answer_hash") or "")[:80],
                 "beam_state_verifier_status": str(result.get("beam_state_verifier_status") or "")[:80],
                 "beam_direct_answer_bypass_reason": str(result.get("beam_direct_answer_bypass_reason") or "")[:120],
+                "beam_state_resolver_status": str(result.get("beam_state_resolver_status") or "")[:80],
+                "beam_state_resolution_rule": str(result.get("beam_state_resolution_rule") or "")[:80],
+                "supporting_event_hash_count": safe_list_count(result.get("supporting_event_hashes")),
+                "beam_state_resolver_supporting_event_hash_count": safe_list_count(
+                    result.get("beam_state_resolver_supporting_event_hashes")
+                ),
+                "beam_state_verifier_supporting_event_hash_count": safe_list_count(
+                    result.get("beam_state_verifier_supporting_event_hashes")
+                ),
             }
         )
 

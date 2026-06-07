@@ -238,6 +238,108 @@ def test_beam_failure_audit_reports_sanitized_term_coverage_without_terms(tmp_pa
     assert_public_report_has_no_raw_payload(report)
 
 
+def test_beam_failure_audit_keeps_safe_candidate_and_resolver_diagnostics(tmp_path):
+    module = load_module()
+    bundle = {
+        "dataset": "beam_1M",
+        "run_id": "private-beam-slice",
+        "top_k_values": [20],
+        "questions": [
+            {
+                "question_id": "beam-q1",
+                "category": "knowledge_update",
+                "question": "private raw question",
+                "ground_truth_answer": "private raw answer",
+                "first_hit_top_k": 1,
+                "retrieved_memories_by_top_k": {"20": [{"memory": "private raw memory"}]},
+            }
+        ],
+    }
+    run = {
+        "dataset": "beam_1M",
+        "run_id": "private-beam-slice",
+        "summary": {"20": {"passed": 0, "total": 1, "accuracy": 0.0}},
+        "questions": [
+            {
+                "question_id": "beam-q1",
+                "category": "knowledge_update",
+                "question_hash": "hash-q1",
+                "cutoff_results": {
+                    "20": {
+                        "judgment": "FAIL",
+                        "score": 0.0,
+                        "memories_evaluated": 20,
+                        "beam_direct_span_candidate": True,
+                        "beam_answer_candidate_count": 2,
+                        "beam_answer_selected_candidate_index": 1,
+                        "beam_answer_candidate_summaries": [
+                            {
+                                "id": "candidate_1",
+                                "kind": "normal",
+                                "answer_hash": "hash-normal",
+                                "answer_chars": 42,
+                                "question_overlap_terms": 2,
+                                "question_term_count": 5,
+                                "question_overlap_ratio": 0.4,
+                                "specific_question_overlap_terms": 1,
+                                "specific_question_term_count": 2,
+                                "specific_question_overlap_ratio": 0.5,
+                                "ground_truth_overlap_terms": 0,
+                                "ground_truth_term_count": 3,
+                                "ground_truth_overlap_ratio": 0.0,
+                                "state_marker_present": False,
+                            },
+                            {
+                                "id": "candidate_2",
+                                "kind": "direct_span",
+                                "answer_hash": "hash-direct",
+                                "answer_chars": 120,
+                                "question_overlap_terms": 4,
+                                "question_term_count": 5,
+                                "question_overlap_ratio": 0.8,
+                                "specific_question_overlap_terms": 2,
+                                "specific_question_term_count": 2,
+                                "specific_question_overlap_ratio": 1.0,
+                                "ground_truth_overlap_terms": 3,
+                                "ground_truth_term_count": 3,
+                                "ground_truth_overlap_ratio": 1.0,
+                                "state_marker_present": True,
+                            },
+                        ],
+                        "beam_state_resolver_status": "ambiguous",
+                        "beam_state_resolution_rule": "latest_knowledge_update",
+                        "supporting_event_hashes": ["hash-a", "hash-b"],
+                        "beam_state_resolver_supporting_event_hashes": ["hash-a"],
+                        "beam_state_verifier_supporting_event_hashes": ["hash-b"],
+                        "judge_count": 3,
+                        "judge_pass_count": 0,
+                    }
+                },
+            }
+        ],
+    }
+
+    report = module.build_audit_report(bundle, run, verification={}, debug={}, cutoff=20)
+    rendered = json.dumps(report)
+    row = report["failed_questions"][0]
+    direct = row["candidate_summaries"][1]
+
+    assert row["failure_class"] == "beam_direct_span_candidate_not_selected"
+    assert direct["kind"] == "direct_span"
+    assert direct["specific_question_overlap_ratio"] == 1.0
+    assert direct["ground_truth_overlap_terms"] == 3
+    assert direct["state_marker_present"] is True
+    assert row["beam_state_resolver_status"] == "ambiguous"
+    assert row["beam_state_resolution_rule"] == "latest_knowledge_update"
+    assert row["supporting_event_hash_count"] == 2
+    assert row["beam_state_resolver_supporting_event_hash_count"] == 1
+    assert row["beam_state_verifier_supporting_event_hash_count"] == 1
+    assert "private raw question" not in rendered
+    assert "private raw answer" not in rendered
+    assert "private raw memory" not in rendered
+    assert_public_report_has_no_raw_payload(report)
+
+
 def test_beam_failure_audit_classifies_typed_object_failures_when_flagged(monkeypatch):
     module = load_module()
     monkeypatch.setenv("KONTEXT_TYPED_OBJECT_SUMMARY", "1")
