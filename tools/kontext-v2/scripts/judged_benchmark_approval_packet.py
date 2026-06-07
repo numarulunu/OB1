@@ -4,6 +4,7 @@ import argparse
 import json
 import math
 import os
+import re
 import shlex
 import sys
 from pathlib import Path
@@ -22,6 +23,8 @@ DEFAULT_JUDGE_OUTPUT_TOKENS = 120
 DEFAULT_PAID_MAX_MEMORIES = 10
 DEFAULT_PAID_MEMORY_MAX_CHARS = 1200
 DEFAULT_PAID_TOTAL_MAX_CHARS = 18000
+PRIVATE_PATH_TOKEN = "PRIVATE_PATH_REDACTED"
+PRIVATE_PATH_RE = re.compile(r"/opt/kontext/private/[^\s'\";]+")
 
 
 def load_bundle(path: str | Path) -> dict[str, Any]:
@@ -29,6 +32,12 @@ def load_bundle(path: str | Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("input bundle must be a JSON object")
     return payload
+
+
+def redact_private_paths(value: str | None) -> str | None:
+    if value is None:
+        return None
+    return PRIVATE_PATH_RE.sub(PRIVATE_PATH_TOKEN, str(value))
 
 
 def _env_bool(name: str) -> bool:
@@ -515,6 +524,11 @@ def build_packet(args: argparse.Namespace) -> dict[str, Any]:
     answer_prompt_caps = effective_answer_limits(args)
     answer_prompt_caps = {key: value for key, value in answer_prompt_caps.items() if value is not None}
     command = command_template(args, judge_units_per_question, question_count)
+    public_input_bundle = redact_private_paths(args.input_bundle)
+    private_debug_output = getattr(args, "private_debug_output", None)
+    public_private_debug_output = redact_private_paths(private_debug_output)
+    public_command = redact_private_paths(command)
+    public_command_wrapper = redact_private_paths(command_wrapper_template(args, command))
     packet = {
         "ok": True,
         "mode": "judged-benchmark-approval-packet",
@@ -523,7 +537,8 @@ def build_packet(args: argparse.Namespace) -> dict[str, Any]:
         "dataset": str(bundle.get("dataset") or "unknown"),
         "run_id": str(bundle.get("run_id") or "unknown"),
         "retrieval_backend": str(bundle.get("retrieval_backend") or "kontext"),
-        "input_bundle": args.input_bundle,
+        "input_bundle": public_input_bundle,
+        "input_bundle_private_path_redacted": public_input_bundle != str(args.input_bundle),
         "run_output": args.run_output,
         "verification_output": args.verification_output,
         "question_offset": max(int(getattr(args, "question_offset", 0) or 0), 0),
@@ -558,7 +573,10 @@ def build_packet(args: argparse.Namespace) -> dict[str, Any]:
         "beam_focused_state_answer": bool(getattr(args, "beam_focused_state_answer", False)),
         "longmemeval_evidence_windows": bool(getattr(args, "longmemeval_evidence_windows", False)),
         "longmemeval_structured_evidence": bool(getattr(args, "longmemeval_structured_evidence", False)),
-        "private_debug_output": getattr(args, "private_debug_output", None),
+        "private_debug_output": public_private_debug_output,
+        "private_debug_output_private_path_redacted": bool(
+            private_debug_output and public_private_debug_output != str(private_debug_output)
+        ),
         "omit_temperature": bool(getattr(args, "omit_temperature", False)),
         "reasoning_effort": getattr(args, "reasoning_effort", None),
         "answer_prompt_caps": answer_prompt_caps,
@@ -571,8 +589,8 @@ def build_packet(args: argparse.Namespace) -> dict[str, Any]:
         "min_accuracy": args.min_accuracy,
         "mem0_target_accuracy": args.mem0_target_accuracy,
         "required_env_vars": [args.api_key_env],
-        "command_template": command,
-        "command_wrapper_template": command_wrapper_template(args, command),
+        "command_template": public_command,
+        "command_wrapper_template": public_command_wrapper,
         "notes": [
             "This packet does not call answerer or judge models.",
             "Run only after explicit approval for the stated max_cost_usd.",

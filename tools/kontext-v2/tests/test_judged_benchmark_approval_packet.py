@@ -463,15 +463,32 @@ def test_packet_includes_beam_structured_evidence_and_private_debug_without_raw_
 
     assert packet["ok"] is True
     assert packet["beam_structured_evidence"] is True
-    assert packet["private_debug_output"] == "/opt/kontext/private/judged-diagnostics/beam-debug.json"
+    assert packet["private_debug_output"] == "PRIVATE_PATH_REDACTED"
+    assert packet["private_debug_output_private_path_redacted"] is True
     assert packet["estimated_llm_calls"]["beam_structured_evidence_calls"] == 1
     assert packet["estimated_llm_calls"]["judge_calls"] == 3
     assert "--beam-structured-evidence" in packet["command_template"]
-    assert "--private-debug-output /opt/kontext/private/judged-diagnostics/beam-debug.json" in packet["command_template"]
+    assert "--private-debug-output PRIVATE_PATH_REDACTED" in packet["command_template"]
+    assert "/opt/kontext/private" not in rendered
     assert "private beam question" not in rendered
     assert "private beam answer" not in rendered
     assert "private criterion" not in rendered
     assert "private beam memory" not in rendered
+
+
+def test_public_packet_redacts_private_paths_without_touching_report_paths():
+    module = load_module()
+
+    value = (
+        "--input-bundle /opt/kontext/private/bundles/beam.json "
+        "--output /opt/kontext/reports/judged-plans/run.json"
+    )
+
+    redacted = module.redact_private_paths(value)
+
+    assert "/opt/kontext/private" not in redacted
+    assert "PRIVATE_PATH_REDACTED" in redacted
+    assert "/opt/kontext/reports/judged-plans/run.json" in redacted
 
 
 def test_beam_helper_packet_defaults_to_bounded_memory_caps(tmp_path):
