@@ -2443,11 +2443,13 @@ def beam_direct_span_metric_override_index(
     selected_question = metric(selected_summary, "question_overlap_terms")
     selected_chars = metric(selected_summary, "answer_chars")
     selected_marker = bool(selected_summary.get("state_marker_present"))
+    selected_kind = str(selected.get("kind") or "")
     trusted: list[tuple[int, int, int, int]] = []
     for index, summary, _candidate in direct_candidates:
         direct_specific = metric(summary, "specific_question_overlap_terms")
         direct_question = metric(summary, "question_overlap_terms")
         direct_chars = metric(summary, "answer_chars")
+        direct_marker = bool(summary.get("state_marker_present"))
         if direct_specific <= 0 or direct_question <= 0 or direct_chars <= 0:
             continue
         strong_metric_win = (
@@ -2474,7 +2476,60 @@ def beam_direct_span_metric_override_index(
             and direct_specific >= selected_specific
             and direct_question >= selected_question + 1
         )
-        if strong_metric_win or concise_metric_win or concise_near_tie or fuller_metric_win:
+        fuller_context_win = (
+            direct_chars <= 280
+            and selected_chars <= 80
+            and direct_chars >= selected_chars + 80
+            and direct_specific >= selected_specific
+            and direct_question >= selected_question - 1
+            and not selected_marker
+        )
+        marker_metric_win = (
+            direct_marker
+            and not selected_marker
+            and direct_chars <= 220
+            and direct_specific >= selected_specific + 1
+            and direct_question >= selected_question + 1
+        )
+        verbose_marker_win = (
+            direct_marker
+            and selected_chars >= 600
+            and direct_chars <= 220
+            and direct_specific >= max(2, selected_specific - 2)
+            and direct_question >= max(2, selected_question - 2)
+        )
+        verbose_concise_win = (
+            selected_chars >= 400
+            and direct_chars <= 180
+            and direct_specific >= selected_specific + 1
+            and direct_question >= selected_question - 1
+        )
+        concise_overlap_win = (
+            direct_chars <= 180
+            and selected_chars <= 100
+            and direct_specific >= selected_specific + 1
+            and direct_question >= selected_question + 1
+        )
+        semantic_tie_win = (
+            selected_kind in {"normal", "alternate"}
+            and not selected_marker
+            and direct_chars <= 220
+            and selected_chars <= 120
+            and direct_specific >= selected_specific
+            and direct_question >= selected_question
+        )
+        if (
+            strong_metric_win
+            or concise_metric_win
+            or concise_near_tie
+            or fuller_metric_win
+            or fuller_context_win
+            or marker_metric_win
+            or verbose_marker_win
+            or verbose_concise_win
+            or concise_overlap_win
+            or semantic_tie_win
+        ):
             trusted.append((direct_specific, direct_question, -direct_chars, index))
     if not trusted:
         return 0
