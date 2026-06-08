@@ -3420,3 +3420,14 @@ Next step:
 - Local verification: Focused judged runner tests passed `153 passed`; required retirement suite passed `204 passed`; touched scripts compiled with `py_compile`; scoped `git diff --check` passed.
 - Remote deploy: Backed up and deployed `judged_benchmark_run.py` to `/opt/kontext/scripts` and `/opt/kontext/src/scripts`; both copies match SHA256 `1e4cc1f276ca373c0e084f2e13c62c2fdf5ab21a0537078890d22146cd609d9b`.
 - Remote smoke: A fake deployed-provider `429` check returned one attempt and zero sleeps, confirming fail-fast behavior without any real provider call.
+
+## 2026-06-08 - BEAM selector metric rules and second zero-cost 429
+
+- Summary: Tightened the BEAM selector prompt so the model is explicitly told how to use the safe selector metrics: prefer supported candidates with stronger specific-question overlap, and avoid zero-overlap candidates when a stronger on-task candidate exists. This remains a selector-quality nudge rather than a direct-span bypass.
+- Paid attempt: Ran one bounded BEAM30 proof attempt from `reports/judged-plans/beam30-20260608T004525Z-selector-metrics-gpt5mini-approval.json` after fail-fast deployment. Provider returned `429` immediately with `completed_calls=0`, usage `0`, and actual cost `$0.00`; public failed run and verification artifacts scanned secret/private hits at `0`.
+- Files touched: `tools/kontext-v2/scripts/judged_benchmark_run.py`, `tools/kontext-v2/tests/test_judged_benchmark_run.py`, and this log.
+- Local verification: Focused judged runner tests passed `153 passed`; required retirement suite passed `204 passed`; touched scripts compiled with `py_compile`; scoped `git diff --check` passed.
+- Remote deploy: Backed up and deployed `judged_benchmark_run.py` to `/opt/kontext/scripts` and `/opt/kontext/src/scripts`; both copies match SHA256 `8f80d26d283dfdd90ab31322d713a114bb504bcfcf1c1e9a6df2f611af4a1b92`.
+- No-call diagnostics: Fresh BEAM30 fake-post replay `reports/judged-plans/beam30-20260608T005625Z-selector-metric-rules-fake-provider-diagnostic.json` covered `30` questions and `306` synthetic calls, with `24` selector prompts carrying both safe metrics and metric-use rules, direct-span present on `30/30` rows, direct-span specific-overlap stronger than fake-selected candidate on `25/30` rows, private-path hits `0`, and secret-shaped hits `0`.
+- Fresh approval: Generated `reports/judged-plans/beam30-20260608T005802Z-selector-metric-rules-gpt5mini-approval.json`, estimated `$0.15822` under the `$0.18` ceiling with `30` questions, private-path hits `0`, and secret-shaped hits `0`.
+- Decision: Retirement remains `9/10` because `retirement_quality_gate` still needs a real BEAM30 paid proof. Do not issue another paid attempt while the provider returns `429`; the next paid action should be a single bounded run from the latest selector-metric-rules approval after provider availability changes.

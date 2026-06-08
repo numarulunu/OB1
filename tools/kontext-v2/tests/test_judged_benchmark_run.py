@@ -4834,6 +4834,8 @@ def test_beam_answer_selector_prompt_includes_safe_overlap_metrics_only():
     assert "Specific-question overlap:" in user_prompt
     assert "State marker present:" in user_prompt
     assert "Answer chars:" in user_prompt
+    assert "use Safe selector metrics" in user_prompt
+    assert "zero-overlap candidate" in user_prompt
     assert "secret-ground-truth-only" not in user_prompt
     assert "ground_truth" not in user_prompt
 
