@@ -25,6 +25,12 @@ DEFAULT_PAID_MEMORY_MAX_CHARS = 1200
 DEFAULT_PAID_TOTAL_MAX_CHARS = 18000
 PRIVATE_PATH_TOKEN = "PRIVATE_PATH_REDACTED"
 PRIVATE_PATH_RE = re.compile(r"/opt/kontext/private/[^\s'\";]+")
+PROVIDER_COOLDOWN_GUARD = {
+    "enabled": True,
+    "reports_dir": "/opt/kontext/reports/judged-plans",
+    "cooldown_minutes": 60,
+    "override_env": "KONTEXT_OVERRIDE_PROVIDER_429_COOLDOWN",
+}
 
 
 def load_bundle(path: str | Path) -> dict[str, Any]:
@@ -355,6 +361,7 @@ def command_template(args: argparse.Namespace, judge_units_per_question: float =
 def command_wrapper_template(args: argparse.Namespace, command: str) -> str:
     env_name = str(args.api_key_env)
     base_url = str(args.base_url)
+    guard = PROVIDER_COOLDOWN_GUARD
     return "\n".join(
         [
             "#!/usr/bin/env bash",
@@ -364,9 +371,9 @@ def command_wrapper_template(args: argparse.Namespace, command: str) -> str:
             'if [ -e "$RUN_OUTPUT" ]; then echo "run output already exists" >&2; exit 3; fi',
             'if [ -e "$VERIFICATION_OUTPUT" ]; then echo "verification output already exists" >&2; exit 3; fi',
             "python3 /opt/kontext/scripts/judged_provider_cooldown_guard.py "
-            "--reports-dir /opt/kontext/reports/judged-plans "
-            "--cooldown-minutes 60 "
-            "--override-env KONTEXT_OVERRIDE_PROVIDER_429_COOLDOWN",
+            f"--reports-dir {shlex.quote(guard['reports_dir'])} "
+            f"--cooldown-minutes {guard['cooldown_minutes']} "
+            f"--override-env {shlex.quote(guard['override_env'])}",
             f'if [ -z "${{{env_name}:-}}" ]; then echo "{env_name} is missing" >&2; exit 4; fi',
             "python3 - <<'PY'",
             "import os",
@@ -592,6 +599,7 @@ def build_packet(args: argparse.Namespace) -> dict[str, Any]:
         "max_cost_usd": args.max_cost_usd,
         "min_accuracy": args.min_accuracy,
         "mem0_target_accuracy": args.mem0_target_accuracy,
+        "provider_cooldown_guard": PROVIDER_COOLDOWN_GUARD,
         "required_env_vars": [args.api_key_env],
         "command_template": public_command,
         "command_wrapper_template": public_command_wrapper,

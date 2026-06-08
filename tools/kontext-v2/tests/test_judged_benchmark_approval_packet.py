@@ -112,6 +112,12 @@ def test_packet_summarizes_paid_run_without_raw_text_or_secrets(tmp_path):
     assert packet["top_k_values"] == [50]
     assert packet["estimated_llm_calls"] == {"answer_calls": 1, "judge_calls": 1, "total_calls": 2}
     assert packet["estimated_cost_usd"]["total_usd"] == 0.00592
+    assert packet["provider_cooldown_guard"] == {
+        "enabled": True,
+        "reports_dir": "/opt/kontext/reports/judged-plans",
+        "cooldown_minutes": 60,
+        "override_env": "KONTEXT_OVERRIDE_PROVIDER_429_COOLDOWN",
+    }
     assert packet["required_env_vars"] == ["OPENAI_API_KEY"]
     assert "--approve-cost" in packet["command_template"]
     assert "--verification-output" in packet["command_template"]

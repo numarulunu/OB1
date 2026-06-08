@@ -3481,3 +3481,12 @@ Next step:
 - Remote guard check: `reports/judged-plans/provider-429-cooldown-guard-20260608T014401Z.json` exited blocked with `recent_429_failures=3`, all zero-call provider `429` failures, and `runs_model_calls=false`.
 - Wrapper verification: Fresh approval `reports/judged-plans/beam30-20260608T014525Z-selector-metric-rules-cooldownguard-gpt5mini-approval.json` selected `30` questions, estimated `$0.15822` under `$0.18`, and its wrapper includes both `judged_provider_cooldown_guard.py` and `KONTEXT_OVERRIDE_PROVIDER_429_COOLDOWN`. Public scan `reports/judged-plans/beam30-20260608T014525Z-cooldown-guard-public-scan.json` found raw/private/secret hits `0`.
 - Decision: This prevents repeated paid attempts while the provider is visibly rate-limited. Retirement remains `9/10`; the remaining proof is still a real BEAM30 quality run after provider availability returns or after an explicit override.
+
+## 2026-06-08 - Approval packet cooldown metadata
+
+- Summary: Added structured `provider_cooldown_guard` metadata to judged approval packets so readiness checks can verify cooldown protection without parsing shell wrapper text.
+- Files touched: `tools/kontext-v2/scripts/judged_benchmark_approval_packet.py`, `tools/kontext-v2/tests/test_judged_benchmark_approval_packet.py`, and this log.
+- Local verification: Focused approval/guard tests passed `45 passed`; required retirement/runner/approval/guard suite passed `249 passed`; touched scripts compiled; scoped `git diff --check` passed.
+- Remote deploy: Backed up approval scripts under `/opt/kontext/backups/20260608T014844Z-approval-cooldown-metadata`, deployed to `/opt/kontext/scripts` and `/opt/kontext/src/scripts`, compiled both, and verified matching SHA256 `4ce3019bfffc1ffe4e99bab68f44df1c425b52fd3c4adfc8cce61e66ee68ae33`.
+- Remote verification: Fresh approval `reports/judged-plans/beam30-20260608T014943Z-selector-metric-rules-cooldownmeta-gpt5mini-approval.json` selected `30` questions, estimated `$0.15822` under `$0.18`, includes `provider_cooldown_guard` with `enabled=true`, `cooldown_minutes=60`, and override env `KONTEXT_OVERRIDE_PROVIDER_429_COOLDOWN`; wrapper still contains the guard command. Public scan `reports/judged-plans/beam30-20260608T014943Z-cooldownmeta-public-scan.json` found raw/private/secret hits `0`.
+- Decision: Future tooling can now assert paid-run cooldown protection structurally. Retirement remains `9/10`; `retirement_quality_gate` still requires real BEAM30 judged proof after provider availability returns or an explicit override.
