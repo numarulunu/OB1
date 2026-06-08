@@ -363,6 +363,10 @@ def command_wrapper_template(args: argparse.Namespace, command: str) -> str:
             f"VERIFICATION_OUTPUT={shlex.quote(str(args.verification_output))}",
             'if [ -e "$RUN_OUTPUT" ]; then echo "run output already exists" >&2; exit 3; fi',
             'if [ -e "$VERIFICATION_OUTPUT" ]; then echo "verification output already exists" >&2; exit 3; fi',
+            "python3 /opt/kontext/scripts/judged_provider_cooldown_guard.py "
+            "--reports-dir /opt/kontext/reports/judged-plans "
+            "--cooldown-minutes 60 "
+            "--override-env KONTEXT_OVERRIDE_PROVIDER_429_COOLDOWN",
             f'if [ -z "${{{env_name}:-}}" ]; then echo "{env_name} is missing" >&2; exit 4; fi',
             "python3 - <<'PY'",
             "import os",

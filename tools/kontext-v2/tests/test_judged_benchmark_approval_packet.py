@@ -1649,6 +1649,9 @@ def test_packet_includes_guarded_wrapper_template(tmp_path):
     assert "VERIFICATION_OUTPUT=" in wrapper
     assert "[ -e \"$RUN_OUTPUT\" ]" in wrapper
     assert "[ -e \"$VERIFICATION_OUTPUT\" ]" in wrapper
+    assert "judged_provider_cooldown_guard.py" in wrapper
+    assert "--cooldown-minutes 60" in wrapper
+    assert "KONTEXT_OVERRIDE_PROVIDER_429_COOLDOWN" in wrapper
     assert "/v1/models" in wrapper
     assert packet["command_template"] in wrapper
     assert "sk-" not in wrapper
