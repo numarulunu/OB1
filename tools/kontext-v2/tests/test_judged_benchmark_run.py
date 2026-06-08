@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import urllib.error
 from argparse import Namespace
@@ -1888,6 +1889,24 @@ def test_private_debug_output_path_must_stay_under_kontext_private():
     assert module.validate_private_debug_output_path("/opt/kontext/private/../reports/debug.json") == "private debug output must be under /opt/kontext/private"
     assert module.validate_private_debug_output_path("/opt/kontext/private/./../../tmp/debug.json") == "private debug output must be under /opt/kontext/private"
     assert module.validate_private_debug_output_path("/tmp/debug.json") == "private debug output must be under /opt/kontext/private"
+
+
+def test_private_debug_output_summary_redacts_path(monkeypatch):
+    module = load_module()
+
+    def fake_write_private_json_exclusive(path_value, payload):
+        assert path_value == "/opt/kontext/private/judged-diagnostics/debug.json"
+        assert payload["private_do_not_log"] is True
+        return Path(path_value)
+
+    monkeypatch.setattr(module, "write_private_json_exclusive", fake_write_private_json_exclusive)
+
+    result = module.write_private_debug_output(
+        "/opt/kontext/private/judged-diagnostics/debug.json",
+        [{"safe": "private record"}],
+    )
+
+    assert result == {"path": "PRIVATE_PATH_REDACTED", "records": 1}
 
 
 def test_beam_structured_evidence_call_is_private_and_guides_answer_prompt(tmp_path):
@@ -6302,18 +6321,81 @@ def test_default_openai_compatible_post_honors_retry_after(monkeypatch):
     assert attempts["count"] == 2
 
 
-def test_default_openai_compatible_post_does_not_retry_429_by_default(monkeypatch):
+def test_default_openai_compatible_post_uses_extended_timeout(monkeypatch):
+    module = load_module()
+    observed = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps({"choices": [{"message": {"content": "ok"}}], "usage": {"total_tokens": 1}}).encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        observed["timeout"] = timeout
+        return FakeResponse()
+
+    monkeypatch.setattr(module.urllib.request, "urlopen", fake_urlopen)
+
+    result = module.default_openai_compatible_post(
+        {"model": "model", "messages": []},
+        "test-key",
+        "https://example.test/v1/chat/completions",
+    )
+
+    assert result["text"] == "ok"
+    assert observed["timeout"] == module.DEFAULT_OPENAI_COMPATIBLE_TIMEOUT_SECONDS
+    assert observed["timeout"] == 300
+
+
+def test_default_openai_compatible_post_retries_transient_503_by_default(monkeypatch):
     module = load_module()
     sleeps = []
     attempts = {"count": 0}
 
-    class FakeHeaders:
-        def get(self, name, default=None):
-            return "7" if name.lower() == "retry-after" else default
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps({"choices": [{"message": {"content": "ok"}}], "usage": {"total_tokens": 1}}).encode("utf-8")
 
     def fake_urlopen(request, timeout):
         attempts["count"] += 1
-        raise urllib.error.HTTPError("https://example.test", 429, "Too Many Requests", FakeHeaders(), None)
+        if attempts["count"] == 1:
+            raise urllib.error.HTTPError("https://example.test", 503, "Service Unavailable", None, None)
+        return FakeResponse()
+
+    monkeypatch.setattr(module.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(module.time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    result = module.default_openai_compatible_post(
+        {"model": "model", "messages": []},
+        "test-key",
+        "https://example.test/v1/chat/completions",
+    )
+
+    assert result["text"] == "ok"
+    assert sleeps == [30.0]
+    assert attempts["count"] == 2
+
+
+def test_default_openai_compatible_post_does_not_retry_insufficient_quota_429(monkeypatch):
+    module = load_module()
+    sleeps = []
+    attempts = {"count": 0}
+
+    def fake_urlopen(request, timeout):
+        attempts["count"] += 1
+        body = b'{"error":{"type":"insufficient_quota","message":"You exceeded your current quota"}}'
+        raise urllib.error.HTTPError("https://example.test", 429, "Too Many Requests", None, io.BytesIO(body))
 
     monkeypatch.setattr(module.urllib.request, "urlopen", fake_urlopen)
     monkeypatch.setattr(module.time, "sleep", lambda seconds: sleeps.append(seconds))

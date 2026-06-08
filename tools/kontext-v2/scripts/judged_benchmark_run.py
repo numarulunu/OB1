@@ -26,6 +26,9 @@ DEFAULT_ANSWER_INPUT_TOKENS = 4_000
 DEFAULT_ANSWER_OUTPUT_TOKENS = 300
 DEFAULT_JUDGE_INPUT_TOKENS = 1_500
 DEFAULT_JUDGE_OUTPUT_TOKENS = 120
+DEFAULT_OPENAI_COMPATIBLE_TIMEOUT_SECONDS = 300
+DEFAULT_OPENAI_COMPATIBLE_RETRIES = 2
+OPENAI_COMPATIBLE_RETRYABLE_HTTP_STATUSES = {429, 500, 502, 503, 504}
 BEAM_STATE_JSON_OUTPUT_TOKENS = 800
 BEAM_VERIFIER_JSON_OUTPUT_TOKENS = 400
 BEAM_SELECTOR_JSON_OUTPUT_TOKENS = 180
@@ -3943,12 +3946,20 @@ def build_judge_messages(question: dict[str, Any], generated_answer: str) -> lis
     ]
 
 
+def is_retryable_openai_compatible_http_error(status: int, error_body: str) -> bool:
+    if status not in OPENAI_COMPATIBLE_RETRYABLE_HTTP_STATUSES:
+        return False
+    lowered = error_body.lower()
+    return "insufficient_quota" not in lowered and "exceeded your current quota" not in lowered
+
+
 def default_openai_compatible_post(
     payload: dict[str, Any],
     api_key: str,
     base_url: str,
-    retries: int = 0,
+    retries: int = DEFAULT_OPENAI_COMPATIBLE_RETRIES,
     retry_sleep_seconds: float = 30.0,
+    timeout_seconds: int = DEFAULT_OPENAI_COMPATIBLE_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
     body = json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(
@@ -3962,7 +3973,7 @@ def default_openai_compatible_post(
     )
     for attempt in range(max(retries, 0) + 1):
         try:
-            with urllib.request.urlopen(request, timeout=120) as response:
+            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
                 data = json.loads(response.read().decode("utf-8"))
             break
         except urllib.error.HTTPError as exc:
@@ -3970,7 +3981,7 @@ def default_openai_compatible_post(
                 error_body = exc.read().decode("utf-8", errors="replace")
             except Exception:
                 error_body = ""
-            if exc.code != 429 or attempt >= max(retries, 0):
+            if not is_retryable_openai_compatible_http_error(exc.code, error_body) or attempt >= max(retries, 0):
                 message = f"HTTP Error {exc.code}: {error_body or exc.reason or 'provider request failed'}"
                 raise OpenAICompatibleHTTPError(exc.code, message) from exc
             retry_after = None
@@ -4106,7 +4117,7 @@ def write_private_debug_output(path_value: str | None, records: list[dict[str, A
         "records": records,
     }
     output_path = write_private_json_exclusive(path_value, payload)
-    return {"path": str(output_path), "records": len(records)}
+    return {"path": "PRIVATE_PATH_REDACTED", "records": len(records)}
 
 
 def first_hit_rank(question: dict[str, Any], top_k: int) -> int | None:
