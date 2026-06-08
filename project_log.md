@@ -3412,3 +3412,11 @@ Next step:
 - No-call diagnostics: Fresh BEAM30 fake-post replay `reports/judged-plans/beam30-20260608T004238Z-selector-metrics-fake-provider-diagnostic.json` covered `30` questions and `306` synthetic calls, with `24` selector prompts carrying safe metrics, direct-span present on `30/30` rows, direct-span specific-overlap stronger than the fake-selected candidate on `25/30` rows, private-path hits `0`, and secret-shaped hits `0`.
 - Fresh approval: Generated `reports/judged-plans/beam30-20260608T004525Z-selector-metrics-gpt5mini-approval.json`, estimated `$0.15822` under the `$0.18` ceiling with `30` questions, private-path hits `0`, and secret-shaped hits `0`.
 - Decision: This is a selector-quality nudge, not proof. Do not rerun paid while the provider returns `429`; when provider availability returns, run one bounded BEAM30 proof attempt from the fresh selector-metrics approval.
+
+## 2026-06-08 - Provider 429 fail-fast hardening
+
+- Summary: Changed the OpenAI-compatible provider adapter to fail fast on `429` by default instead of sleeping through an internal paid retry loop. Explicit callers can still pass a retry count for controlled tests, but benchmark paid runs now stop after the first provider-side `429`.
+- Files touched: `tools/kontext-v2/scripts/judged_benchmark_run.py`, `tools/kontext-v2/tests/test_judged_benchmark_run.py`, and this log.
+- Local verification: Focused judged runner tests passed `153 passed`; required retirement suite passed `204 passed`; touched scripts compiled with `py_compile`; scoped `git diff --check` passed.
+- Remote deploy: Backed up and deployed `judged_benchmark_run.py` to `/opt/kontext/scripts` and `/opt/kontext/src/scripts`; both copies match SHA256 `1e4cc1f276ca373c0e084f2e13c62c2fdf5ab21a0537078890d22146cd609d9b`.
+- Remote smoke: A fake deployed-provider `429` check returned one attempt and zero sleeps, confirming fail-fast behavior without any real provider call.

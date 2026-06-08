@@ -3944,7 +3944,7 @@ def default_openai_compatible_post(
     payload: dict[str, Any],
     api_key: str,
     base_url: str,
-    retries: int = 5,
+    retries: int = 0,
     retry_sleep_seconds: float = 30.0,
 ) -> dict[str, Any]:
     body = json.dumps(payload).encode("utf-8")

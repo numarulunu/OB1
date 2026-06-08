@@ -6,6 +6,8 @@ import urllib.error
 from argparse import Namespace
 from pathlib import Path
 
+import pytest
+
 
 SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "judged_benchmark_run.py"
 
@@ -6296,6 +6298,33 @@ def test_default_openai_compatible_post_honors_retry_after(monkeypatch):
     assert result["text"] == "ok"
     assert sleeps == [7.0]
     assert attempts["count"] == 2
+
+
+def test_default_openai_compatible_post_does_not_retry_429_by_default(monkeypatch):
+    module = load_module()
+    sleeps = []
+    attempts = {"count": 0}
+
+    class FakeHeaders:
+        def get(self, name, default=None):
+            return "7" if name.lower() == "retry-after" else default
+
+    def fake_urlopen(request, timeout):
+        attempts["count"] += 1
+        raise urllib.error.HTTPError("https://example.test", 429, "Too Many Requests", FakeHeaders(), None)
+
+    monkeypatch.setattr(module.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(module.time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    with pytest.raises(module.OpenAICompatibleHTTPError):
+        module.default_openai_compatible_post(
+            {"model": "model", "messages": []},
+            "test-key",
+            "https://example.test/v1/chat/completions",
+        )
+
+    assert sleeps == []
+    assert attempts["count"] == 1
 
 
 def test_beam_deterministic_resolver_uses_latest_preference_update():
