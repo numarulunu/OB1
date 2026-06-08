@@ -4808,6 +4808,34 @@ def test_beam_direct_span_candidate_yields_typed_projection_to_selector(tmp_path
     assert_public_report_has_no_raw_payload(result)
 
 
+def test_beam_answer_selector_prompt_includes_safe_overlap_metrics_only():
+    module = load_module()
+    question = {
+        "category": "knowledge_update",
+        "question": "What is the current launch codename for the billing dashboard?",
+        "ground_truth_answer": "secret-ground-truth-only",
+    }
+    candidates = [
+        {"id": "candidate_1", "kind": "normal", "answer": "fallback answer"},
+        {
+            "id": "candidate_2",
+            "kind": "direct_span",
+            "answer": "The current launch codename for the billing dashboard is Harbor.",
+        },
+    ]
+
+    messages = module.build_beam_answer_selector_messages(question, [], candidates)
+    user_prompt = messages[1]["content"]
+
+    assert "Safe selector metrics:" in user_prompt
+    assert "Question-term overlap:" in user_prompt
+    assert "Specific-question overlap:" in user_prompt
+    assert "State marker present:" in user_prompt
+    assert "Answer chars:" in user_prompt
+    assert "secret-ground-truth-only" not in user_prompt
+    assert "ground_truth" not in user_prompt
+
+
 def test_beam_direct_span_candidate_fuses_knowledge_update_model_answer(tmp_path):
     module = load_module()
     bundle_path = tmp_path / "beam-private.json"

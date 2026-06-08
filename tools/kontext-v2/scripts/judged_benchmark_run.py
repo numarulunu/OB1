@@ -1395,12 +1395,30 @@ def build_beam_answer_selector_messages(
     candidates: list[dict[str, str]],
     structured_evidence: str | None = None,
 ) -> list[dict[str, str]]:
+    public_summaries = beam_answer_candidate_public_summaries(candidates, question)
     candidate_lines: list[str] = []
     for index, candidate in enumerate(candidates, start=1):
         candidate_id = str(candidate.get("id") or f"candidate_{index}")
         candidate_kind = str(candidate.get("kind") or "unknown").strip()
         answer = bounded_text(str(candidate.get("answer") or ""), BEAM_SELECTOR_CANDIDATE_MAX_CHARS)
+        summary = public_summaries[index - 1] if index - 1 < len(public_summaries) else {}
+        metric_lines: list[str] = []
+        if "question_overlap_terms" in summary and "question_term_count" in summary:
+            metric_lines.append(
+                f"Question-term overlap: {summary.get('question_overlap_terms')}/"
+                f"{summary.get('question_term_count')}"
+            )
+        if "specific_question_overlap_terms" in summary and "specific_question_term_count" in summary:
+            metric_lines.append(
+                f"Specific-question overlap: {summary.get('specific_question_overlap_terms')}/"
+                f"{summary.get('specific_question_term_count')}"
+            )
+        if "state_marker_present" in summary:
+            metric_lines.append(f"State marker present: {str(summary.get('state_marker_present')).lower()}")
+        metric_lines.append(f"Answer chars: {len(answer)}")
         candidate_lines.extend([f"Candidate {candidate_id}:", f"Kind: {candidate_kind or 'unknown'}", answer or "(empty)", ""])
+        if metric_lines:
+            candidate_lines[-1:-1] = ["Safe selector metrics:", *metric_lines]
     evidence_lines = beam_evidence_window_lines(question, memories, max_windows=8, max_chars=8000)
     structured_evidence_text = bounded_text(str(structured_evidence or ""), BEAM_SELECTOR_STRUCTURED_EVIDENCE_MAX_CHARS)
     user = "\n".join(
