@@ -3462,3 +3462,12 @@ Next step:
 - Current BEAM30 no-call: Ran the deployed diagnostic for `beam30-20260608T011447Z-selector-metric-rules-gpt5mini-approval.json` using the VPS-only private bundle path internally. Output `reports/judged-plans/beam30-20260608T011447Z-selector-metric-rules-fake-provider-diagnostic-v2.json` reported `30` selected questions, `306` synthetic calls, max prompt `27860` chars, `24` selector prompts, `24` selector metric prompts, `24` selector metric-rule prompts, and raw/private/secret hits all `0`.
 - Public scan: `reports/judged-plans/beam30-20260608T011447Z-selector-metric-rules-fake-provider-diagnostic-v2-scan.json` confirmed raw-payload hits `0`, private-path hits `0`, and secret-shaped hits `0`.
 - Decision: The exact current BEAM30 packet shape is now reproducibly no-call/sanitized through a committed tool. Retirement still remains `9/10`; the next paid action should be one bounded BEAM30 proof only after provider availability changes from immediate `429`.
+
+## 2026-06-08 - Fresh BEAM30 bounded retry still provider-429
+
+- Summary: Generated a fresh bounded BEAM30 approval packet and used the committed fake-provider diagnostic before making exactly one paid attempt. The packet remained the current selector-metric-rules shape and did not change code.
+- Fresh approval: `reports/judged-plans/beam30-20260608T013619Z-selector-metric-rules-gpt5mini-approval.json` selected `30` questions at cutoff `50`, estimated `$0.15822` under the `$0.18` ceiling, estimated `360` calls, and had private-path/secret-shaped hits `0`.
+- No-call diagnostic: `reports/judged-plans/beam30-20260608T013619Z-selector-metric-rules-fake-provider-diagnostic.json` reported `30` questions, `306` synthetic calls, max prompt `27860` chars, `24` selector prompts, `24` selector metric prompts, `24` selector metric-rule prompts, and raw/private/secret hits all `0`. Prepaid public scan was `0/0/0`.
+- Paid attempt: Ran one bounded proof using `/opt/kontext/private/paid-run.env` only inside the remote shell. Provider returned `429` immediately with `completed_calls=0`, token usage `0`, actual cost `$0.00`, and verification failed as expected.
+- Postpaid scan: `reports/judged-plans/beam30-20260608T013619Z-selector-metric-rules-postpaid-public-scan.json` scanned the approval, no-call diagnostic, failed paid run, and failed verification; raw-payload hits `0`, private-path hits `0`, secret-shaped hits `0`.
+- Decision: Retirement remains `9/10`; only `retirement_quality_gate` is missing. Do not retry paid in a loop while the provider returns immediate `429`.
