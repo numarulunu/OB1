@@ -2402,6 +2402,86 @@ def beam_trusted_typed_projection_candidate_index(question: dict[str, Any], cand
     return typed_index
 
 
+def beam_direct_span_metric_override_index(
+    question: dict[str, Any],
+    candidates: list[dict[str, str]],
+    selected_index: int,
+) -> int:
+    if str(question.get("category") or "").lower() != "knowledge_update":
+        return 0
+    if selected_index < 1 or selected_index > len(candidates):
+        return 0
+    selected = candidates[selected_index - 1]
+    if str(selected.get("kind") or "") == "direct_span":
+        return 0
+    if str(selected.get("kind") or "") not in {"normal", "alternate", "extractive", "ranked_state_memory", "state_direct"}:
+        return 0
+    selected_answer = str(selected.get("answer") or "").strip()
+    if not selected_answer:
+        return 0
+    summaries = beam_answer_candidate_public_summaries(candidates, question)
+    selected_summary = summaries[selected_index - 1] if selected_index - 1 < len(summaries) else {}
+    direct_candidates: list[tuple[int, dict[str, Any], dict[str, str]]] = []
+    for index, candidate in enumerate(candidates, start=1):
+        if str(candidate.get("kind") or "") != "direct_span":
+            continue
+        answer = str(candidate.get("answer") or "").strip()
+        if not answer or normalized_beam_candidate_answer(answer) == normalized_beam_candidate_answer(selected_answer):
+            continue
+        summary = summaries[index - 1] if index - 1 < len(summaries) else {}
+        direct_candidates.append((index, summary, candidate))
+    if not direct_candidates:
+        return 0
+
+    def metric(summary: dict[str, Any], key: str) -> int:
+        try:
+            return int(summary.get(key) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    selected_specific = metric(selected_summary, "specific_question_overlap_terms")
+    selected_question = metric(selected_summary, "question_overlap_terms")
+    selected_chars = metric(selected_summary, "answer_chars")
+    selected_marker = bool(selected_summary.get("state_marker_present"))
+    trusted: list[tuple[int, int, int, int]] = []
+    for index, summary, _candidate in direct_candidates:
+        direct_specific = metric(summary, "specific_question_overlap_terms")
+        direct_question = metric(summary, "question_overlap_terms")
+        direct_chars = metric(summary, "answer_chars")
+        if direct_specific <= 0 or direct_question <= 0 or direct_chars <= 0:
+            continue
+        strong_metric_win = (
+            direct_specific >= max(4, selected_specific + 2)
+            and direct_question >= selected_question
+        )
+        concise_metric_win = (
+            direct_chars <= 180
+            and selected_chars >= 240
+            and direct_specific >= selected_specific + 1
+            and direct_question >= selected_question
+        )
+        concise_near_tie = (
+            direct_chars <= 180
+            and selected_chars >= 300
+            and direct_specific >= selected_specific - 1
+            and direct_question >= selected_question - 1
+            and not selected_marker
+        )
+        fuller_metric_win = (
+            direct_chars <= 180
+            and selected_chars <= 80
+            and direct_chars >= selected_chars + 40
+            and direct_specific >= selected_specific
+            and direct_question >= selected_question + 1
+        )
+        if strong_metric_win or concise_metric_win or concise_near_tie or fuller_metric_win:
+            trusted.append((direct_specific, direct_question, -direct_chars, index))
+    if not trusted:
+        return 0
+    trusted.sort(reverse=True)
+    return trusted[0][3]
+
+
 def beam_resolved_state_lines(resolved_state: dict[str, Any] | None) -> list[str]:
     if not isinstance(resolved_state, dict):
         return []
@@ -4988,8 +5068,23 @@ def run_openai_compatible(
                         if isinstance(beam_answer_selector_result, dict)
                         else 0
                     )
+                    direct_span_override_index = beam_direct_span_metric_override_index(
+                        question,
+                        candidates,
+                        beam_answer_selected_candidate_index,
+                    )
+                    if direct_span_override_index:
+                        beam_answer_selector_result = {
+                            "parser_status": "direct_span_metric_override",
+                            "selected_id": f"candidate_{direct_span_override_index}",
+                            "selected_index": direct_span_override_index,
+                            "reason_code": "direct_span_metric_override",
+                            "confidence": 1.0,
+                        }
+                        beam_answer_selected_candidate_index = direct_span_override_index
                     if isinstance(beam_answer_selector_result, dict) and beam_answer_selector_result.get("parser_status") in {
                         "ok",
+                        "direct_span_metric_override",
                         "information_extraction_direct_bypass",
                         "ranked_state_memory_direct_bypass",
                         "typed_projection_direct_bypass",

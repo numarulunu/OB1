@@ -4915,7 +4915,10 @@ def test_beam_direct_span_candidate_fuses_knowledge_update_model_answer(tmp_path
             assert "Harbor" in user_prompt
             return {"text": '{"correct": true, "score": 1.0}', "usage": {"prompt_tokens": 11, "completion_tokens": 3}}
         if "BEAM resolved state:" in user_prompt:
-            return {"text": "model answer", "usage": {"prompt_tokens": 9, "completion_tokens": 4}}
+            return {
+                "text": "The current launch codename for the billing dashboard is model answer.",
+                "usage": {"prompt_tokens": 9, "completion_tokens": 4},
+            }
         return {"text": "alternate answer", "usage": {"prompt_tokens": 9, "completion_tokens": 4}}
 
     result = module.run_openai_compatible(
@@ -4937,7 +4940,7 @@ def test_beam_direct_span_candidate_fuses_knowledge_update_model_answer(tmp_path
     )
     cutoff = result["questions"][0]["cutoff_results"]["20"]
     fused = (
-        "model answer\n"
+        "The current launch codename for the billing dashboard is model answer.\n"
         "Current evidence: The current launch codename for the billing dashboard is Harbor."
     )
     rendered = json.dumps(result)
@@ -5607,6 +5610,178 @@ def test_beam_trusted_typed_projection_candidate_index_rejects_ambiguous_or_unsu
             {"id": "candidate_2", "kind": "typed_projection", "answer": "User: I prefer the citadel staging interface."},
         ],
     ) == 0
+
+
+def test_beam_direct_span_metric_override_accepts_stronger_direct_span():
+    module = load_module()
+    question = {
+        "category": "knowledge_update",
+        "question": "What current deployment target cluster should the billing project use now?",
+    }
+    candidates = [
+        {
+            "id": "candidate_1",
+            "kind": "alternate",
+            "answer": "User: the project should use the old deployment target.",
+        },
+        {
+            "id": "candidate_2",
+            "kind": "direct_span",
+            "answer": "The current billing project deployment target cluster should use blue production now.",
+        },
+    ]
+
+    assert module.beam_direct_span_metric_override_index(question, candidates, 1) == 2
+
+
+def test_beam_direct_span_metric_override_accepts_concise_near_tie():
+    module = load_module()
+    question = {
+        "category": "knowledge_update",
+        "question": "What current billing export destination should reports use?",
+    }
+    verbose_answer = (
+        "Billing export destination archive report sink. "
+        + ("Billing export destination report context. " * 10)
+    )
+    candidates = [
+        {"id": "candidate_1", "kind": "normal", "answer": verbose_answer},
+        {
+            "id": "candidate_2",
+            "kind": "direct_span",
+            "answer": "Billing export destination should use the warehouse report sink.",
+        },
+    ]
+
+    assert module.beam_direct_span_metric_override_index(question, candidates, 1) == 2
+
+
+def test_beam_direct_span_metric_override_accepts_fuller_concise_answer():
+    module = load_module()
+    question = {
+        "category": "knowledge_update",
+        "question": "What current invoice export target should finance reports use?",
+    }
+    candidates = [
+        {"id": "candidate_1", "kind": "normal", "answer": "invoice export target for finance reports"},
+        {
+            "id": "candidate_2",
+            "kind": "direct_span",
+            "answer": "Finance reports should use the warehouse invoice export target now, replacing the archive target.",
+        },
+    ]
+
+    assert module.beam_direct_span_metric_override_index(question, candidates, 1) == 2
+
+
+def test_beam_direct_span_metric_override_rejects_weak_or_unsupported_cases():
+    module = load_module()
+    question = {
+        "category": "knowledge_update",
+        "question": "What current deployment target should the project use now?",
+    }
+
+    assert module.beam_direct_span_metric_override_index(
+        {"category": "information_extraction", "question": "What deployment target was mentioned?"},
+        [
+            {"id": "candidate_1", "kind": "normal", "answer": "deployment target"},
+            {"id": "candidate_2", "kind": "direct_span", "answer": "production deployment target"},
+        ],
+        1,
+    ) == 0
+    assert module.beam_direct_span_metric_override_index(
+        question,
+        [
+            {"id": "candidate_1", "kind": "alternate", "answer": "User: current deployment target should use blue production now."},
+            {"id": "candidate_2", "kind": "direct_span", "answer": "deployment target"},
+        ],
+        1,
+    ) == 0
+    assert module.beam_direct_span_metric_override_index(
+        question,
+        [
+            {"id": "candidate_1", "kind": "alternate", "answer": "blue production deployment target"},
+            {"id": "candidate_2", "kind": "direct_span", "answer": "blue production deployment target"},
+        ],
+        1,
+    ) == 0
+
+
+def test_beam_direct_span_metric_override_beats_selector_choice(tmp_path, monkeypatch):
+    module = load_module()
+    bundle_path = tmp_path / "beam-private.json"
+    bundle_path.write_text(
+        json.dumps(
+            {
+                "dataset": "beam_1M",
+                "run_id": "beam-direct-span-override",
+                "mode": "private-judged-input-bundle",
+                "runs_model_calls": False,
+                "contains_raw_benchmark_text": True,
+                "contains_live_user_memory": False,
+                "top_k_values": [20],
+                "questions": [
+                    {
+                        "question_id": "beam-q1",
+                        "category": "knowledge_update",
+                        "question": "What current deployment target cluster should the billing project use now?",
+                        "ground_truth_answer": "blue production",
+                        "retrieved_memories_by_top_k": {
+                            "20": [{"memory": "private evidence", "metadata": {"session_id": "session_1"}}]
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        module,
+        "beam_direct_span_candidate_answer",
+        lambda question, memories: (
+            "The current billing project deployment target cluster should use blue production now."
+        ),
+    )
+
+    def fake_post(payload, api_key, base_url):
+        system_prompt = payload["messages"][0]["content"]
+        if "Select the best BEAM candidate answer" in system_prompt:
+            return {
+                "text": '{"selected_id":"candidate_1","reason_code":"weaker_model_choice","confidence":0.9}',
+                "usage": {"prompt_tokens": 9, "completion_tokens": 3},
+            }
+        if "strict benchmark judge" in system_prompt:
+            return {"text": '{"correct": true, "score": 1.0}', "usage": {"prompt_tokens": 7, "completion_tokens": 3}}
+        return {
+            "text": "User: the project should use the old deployment target.",
+            "usage": {"prompt_tokens": 11, "completion_tokens": 4},
+        }
+
+    result = module.run_openai_compatible(
+        module.load_bundle(bundle_path),
+        module.ExternalRunConfig(
+            approved=True,
+            max_cost_usd=1.0,
+            answerer_model="answer-model",
+            judge_model="judge-model",
+            api_key="test-key",
+            base_url="https://example.test/v1/chat/completions",
+            prices=module.PriceConfig(1, 1, 1, 1),
+            beam_answer_candidate_selector=True,
+            beam_extractive_candidate=True,
+            beam_direct_span_candidate=True,
+        ),
+        cutoffs="20",
+        http_post=fake_post,
+    )
+
+    cutoff = result["questions"][0]["cutoff_results"]["20"]
+    assert cutoff["beam_answer_selector_status"] == "direct_span_metric_override"
+    assert cutoff["beam_answer_selected_candidate_kind"] == "direct_span"
+    assert cutoff["beam_direct_span_candidate_used"] is True
+    assert cutoff["score"] == 1.0
+    assert_public_report_has_no_raw_payload(result)
 
 
 def test_beam_typed_projection_candidate_adds_selector_candidate_without_extra_answer_call(tmp_path):
