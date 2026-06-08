@@ -1047,16 +1047,21 @@ def _sanitized_judged_proof(verification: dict[str, Any] | None, *, min_question
     raw_gate = gates.get("raw_payload") if isinstance(gates.get("raw_payload"), dict) else {}
     model_gate = gates.get("model_calls") if isinstance(gates.get("model_calls"), dict) else {}
     question_gate = gates.get("question_count") if isinstance(gates.get("question_count"), dict) else {}
+    usage_gate = gates.get("usage") if isinstance(gates.get("usage"), dict) else {}
+    actual_usage = verification.get("actual_usage") if isinstance(verification.get("actual_usage"), dict) else {}
     total = int(summary.get("total") or question_gate.get("selected_questions") or 0)
     raw_hits = int(raw_gate.get("hit_count") or verification.get("raw_payload_hits") or 0)
     completed_calls = int(verification.get("completed_calls") or model_gate.get("completed_calls") or 0)
-    runs_model_calls = verification.get("runs_model_calls") is True or model_gate.get("actual") is True or completed_calls > 0
+    total_usage_tokens = int(actual_usage.get("total_tokens") or usage_gate.get("total_tokens") or 0)
+    has_paid_usage = completed_calls > 0 or total_usage_tokens > 0
+    runs_model_calls = verification.get("runs_model_calls") is True or model_gate.get("actual") is True or has_paid_usage
+    raw_payload_ok = raw_gate.get("ok") is not False and raw_hits == 0
+    question_count_ok = question_gate.get("ok") is not False and total >= int(min_questions or 0)
     actual_proven = (
-        verification.get("ok") is True
-        and runs_model_calls
-        and completed_calls > 0
-        and raw_hits == 0
-        and total >= int(min_questions or 0)
+        runs_model_calls
+        and has_paid_usage
+        and raw_payload_ok
+        and question_count_ok
     )
     return {
         "ok": verification.get("ok") is True,

@@ -472,6 +472,74 @@ def test_run_judged_bundle_state_trial_attaches_sanitized_judged_proof(monkeypat
     assert "must not be copied" not in serialized
 
 
+def test_run_judged_bundle_state_trial_treats_failed_accuracy_as_actual_judged_proof(monkeypatch):
+    monkeypatch.setenv("KONTEXT_BENCHMARK_STATE_MODEL_ENABLED", "1")
+    verification = {
+        "ok": False,
+        "completed_calls": 18,
+        "summary": {"total": 1, "accuracy": 0.4, "avg_score": 0.4},
+        "gates": {
+            "accuracy": {"ok": False, "actual": 0.4, "min_accuracy": 0.8},
+            "raw_payload": {"ok": True, "hit_count": 0, "hit_paths": []},
+            "model_calls": {"ok": True, "actual": True, "completed_calls": 18},
+            "question_count": {"ok": True, "selected_questions": 1},
+        },
+        "private_raw_text": "must not be copied",
+    }
+
+    report = run_judged_bundle_state_trial(
+        FakeStateTrialRepo(),
+        _private_bundle_fixture(),
+        namespace="benchmark:private-hard",
+        source_hash="private-bundle-hash",
+        extractor_version="trial-private-v1",
+        top_k=20,
+        dry_run=True,
+        judged_verification=verification,
+    )
+    serialized = json.dumps(report, sort_keys=True)
+
+    assert report["runs_model_calls"] is True
+    assert report["actual_judged_accuracy_proven"] is True
+    assert report["judged_proof"]["ok"] is False
+    assert report["judged_proof"]["actual_judged_accuracy_proven"] is True
+    assert report["judged_proof"]["accuracy"] == 0.4
+    assert "must not be copied" not in serialized
+
+
+def test_run_judged_bundle_state_trial_accepts_usage_tokens_without_completed_call_count(monkeypatch):
+    monkeypatch.setenv("KONTEXT_BENCHMARK_STATE_MODEL_ENABLED", "1")
+    verification = {
+        "ok": False,
+        "summary": {"total": 1, "accuracy": 0.4, "avg_score": 0.4},
+        "gates": {
+            "accuracy": {"ok": False, "actual": 0.4, "min_accuracy": 0.8},
+            "raw_payload": {"ok": True, "hit_count": 0, "hit_paths": []},
+            "model_calls": {"ok": True, "actual": True},
+            "question_count": {"ok": True, "selected_questions": 1},
+            "usage": {"ok": True, "required": True, "total_tokens": 165486},
+        },
+        "private_raw_text": "must not be copied",
+    }
+
+    report = run_judged_bundle_state_trial(
+        FakeStateTrialRepo(),
+        _private_bundle_fixture(),
+        namespace="benchmark:private-hard",
+        source_hash="private-bundle-hash",
+        extractor_version="trial-private-v1",
+        top_k=20,
+        dry_run=True,
+        judged_verification=verification,
+    )
+    serialized = json.dumps(report, sort_keys=True)
+
+    assert report["runs_model_calls"] is True
+    assert report["actual_judged_accuracy_proven"] is True
+    assert report["judged_proof"]["completed_calls"] == 0
+    assert "must not be copied" not in serialized
+
+
 def test_run_judged_bundle_state_trial_filters_to_selected_judged_hashes_before_proof(monkeypatch):
     monkeypatch.setenv("KONTEXT_BENCHMARK_STATE_MODEL_ENABLED", "1")
     bundle = _private_bundle_fixture()
