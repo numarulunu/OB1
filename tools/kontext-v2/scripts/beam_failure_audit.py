@@ -261,6 +261,40 @@ def selected_candidate_kind(result: dict[str, Any], summaries: list[dict[str, An
     return str(summaries[selected_index - 1].get("kind") or "unknown")
 
 
+def selector_metric_loss_diagnostics(summaries: list[dict[str, Any]]) -> dict[str, Any]:
+    selected = next((row for row in summaries if row.get("selected") is True), None)
+    eligible = [row for row in summaries if safe_int(row.get("answer_chars")) > 0]
+    best = max(
+        eligible,
+        key=lambda row: (
+            safe_int(row.get("specific_question_overlap_terms")),
+            safe_int(row.get("question_overlap_terms")),
+            row.get("state_marker_present") is True,
+            safe_int(row.get("answer_chars")),
+        ),
+        default=selected,
+    )
+    selected_specific = safe_int(selected.get("specific_question_overlap_terms")) if isinstance(selected, dict) else 0
+    selected_question = safe_int(selected.get("question_overlap_terms")) if isinstance(selected, dict) else 0
+    best_specific = safe_int(best.get("specific_question_overlap_terms")) if isinstance(best, dict) else 0
+    best_question = safe_int(best.get("question_overlap_terms")) if isinstance(best, dict) else 0
+    loss = bool(
+        selected
+        and best
+        and best is not selected
+        and (best_specific > selected_specific or (best_specific == selected_specific and best_question > selected_question))
+    )
+    return {
+        "selector_metric_loss": loss,
+        "selected_specific_question_overlap_terms": selected_specific,
+        "selected_question_overlap_terms": selected_question,
+        "best_specific_question_overlap_terms": best_specific,
+        "best_question_overlap_terms": best_question,
+        "best_specific_question_overlap_kind": str(best.get("kind") or "unknown")[:40] if isinstance(best, dict) else "unknown",
+        "best_specific_question_overlap_index": safe_int(best.get("index")) if isinstance(best, dict) else 0,
+    }
+
+
 def class_for_failure(
     question: dict[str, Any],
     bundle_question: dict[str, Any] | None,
@@ -479,6 +513,7 @@ def build_audit_report(
         "judge_or_format_mismatch": 0,
         "no_ground_terms": 0,
     }
+    selector_metric_loss_count = 0
 
     for question in run_questions:
         if not isinstance(question, dict):
@@ -498,6 +533,9 @@ def build_audit_report(
         coverage = term_coverage(bundle_question, debug_record, cutoff)
         candidate_summaries = safe_candidate_summaries(result)
         selected_kind = selected_candidate_kind(result, candidate_summaries)
+        selector_metric_loss = selector_metric_loss_diagnostics(candidate_summaries)
+        if selector_metric_loss["selector_metric_loss"]:
+            selector_metric_loss_count += 1
         increment(coverage_summary, str(coverage.get("coverage_class") or "no_ground_terms"))
         judge_count = int(result.get("judge_count") or 0)
         judge_pass_count = int(result.get("judge_pass_count") or 0)
@@ -519,6 +557,7 @@ def build_audit_report(
                 "term_coverage": coverage,
                 "selected_candidate_index": safe_int(result.get("beam_answer_selected_candidate_index")),
                 "selected_candidate_kind": selected_kind,
+                **selector_metric_loss,
                 "candidate_summaries": candidate_summaries,
                 "generated_answer_hash": str(result.get("generated_answer_hash") or "")[:80],
                 "beam_direct_span_candidate_fused": result.get("beam_direct_span_candidate_fused") is True,
@@ -559,6 +598,7 @@ def build_audit_report(
         "category_breakdown": dict(sorted(category_breakdown.items())),
         "judge_agreement": judge_agreement,
         "coverage_summary": coverage_summary,
+        "selector_metric_loss_summary": {"count": selector_metric_loss_count},
         "failed_questions": failed_question_hashes,
         "source_hashes": {
             "bundle": file_hash(bundle_path),

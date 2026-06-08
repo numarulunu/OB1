@@ -1714,3 +1714,152 @@ def test_beam_failure_audit_classifies_memory_atomizer_failure_without_raw_paylo
     assert "private atomized" not in rendered
     assert "private wrong" not in rendered
     assert_public_report_has_no_raw_payload(report)
+
+
+def test_beam_failure_audit_reports_selector_metric_loss_without_raw_payload(tmp_path):
+    module = load_module()
+    bundle = {
+        "dataset": "beam_1M",
+        "run_id": "private-beam-slice",
+        "questions": [
+            {
+                "question_id": "selector-loss",
+                "category": "knowledge_update",
+                "question": "private raw question",
+                "ground_truth_answer": "private raw answer",
+                "first_hit_top_k": 1,
+                "retrieved_memories_by_top_k": {"20": [{"memory": "private raw memory"}]},
+            }
+        ],
+    }
+    run = {
+        "dataset": "beam_1M",
+        "run_id": "private-beam-slice",
+        "summary": {"20": {"passed": 0, "total": 1, "accuracy": 0.0}},
+        "questions": [
+            {
+                "question_id": "selector-loss",
+                "category": "knowledge_update",
+                "question_hash": "hash-selector-loss",
+                "cutoff_results": {
+                    "20": {
+                        "judgment": "FAIL",
+                        "score": 0.1,
+                        "memories_evaluated": 20,
+                        "beam_direct_span_candidate": True,
+                        "beam_answer_candidate_count": 2,
+                        "beam_answer_selected_candidate_index": 1,
+                        "beam_answer_candidate_summaries": [
+                            {
+                                "id": "candidate_1",
+                                "kind": "generated",
+                                "answer_hash": "selectedhash",
+                                "answer_chars": 41,
+                                "question_overlap_terms": 0,
+                                "specific_question_overlap_terms": 0,
+                                "state_marker_present": False,
+                            },
+                            {
+                                "id": "candidate_2",
+                                "kind": "direct_span",
+                                "answer_hash": "directhash",
+                                "answer_chars": 96,
+                                "question_overlap_terms": 4,
+                                "specific_question_overlap_terms": 3,
+                                "state_marker_present": True,
+                            },
+                        ],
+                        "judge_count": 3,
+                        "judge_pass_count": 0,
+                    }
+                },
+            }
+        ],
+    }
+    debug = {"records": [{"question_id": "selector-loss", "generated_answer": "private wrong answer"}]}
+
+    report = module.build_audit_report(bundle, run, verification={}, debug=debug, cutoff=20)
+    rendered = json.dumps(report)
+    row = report["failed_questions"][0]
+
+    assert report["failure_classes"]["beam_direct_span_candidate_not_selected"] == 1
+    assert report["selector_metric_loss_summary"]["count"] == 1
+    assert row["selector_metric_loss"] is True
+    assert row["selected_specific_question_overlap_terms"] == 0
+    assert row["selected_question_overlap_terms"] == 0
+    assert row["best_specific_question_overlap_terms"] == 3
+    assert row["best_question_overlap_terms"] == 4
+    assert row["best_specific_question_overlap_kind"] == "direct_span"
+    assert row["best_specific_question_overlap_index"] == 2
+    assert "private raw question" not in rendered
+    assert "private raw answer" not in rendered
+    assert "private raw memory" not in rendered
+    assert "private wrong answer" not in rendered
+    assert_public_report_has_no_raw_payload(report)
+
+
+def test_beam_failure_audit_does_not_report_selector_metric_loss_when_selected_is_best():
+    module = load_module()
+    bundle = {
+        "dataset": "beam_1M",
+        "run_id": "private-beam-slice",
+        "questions": [
+            {
+                "question_id": "selector-ok",
+                "category": "knowledge_update",
+                "ground_truth_answer": "private raw answer",
+                "retrieved_memories_by_top_k": {"20": [{"memory": "private raw memory"}]},
+            }
+        ],
+    }
+    run = {
+        "dataset": "beam_1M",
+        "run_id": "private-beam-slice",
+        "summary": {"20": {"passed": 0, "total": 1, "accuracy": 0.0}},
+        "questions": [
+            {
+                "question_id": "selector-ok",
+                "category": "knowledge_update",
+                "question_hash": "hash-selector-ok",
+                "cutoff_results": {
+                    "20": {
+                        "judgment": "FAIL",
+                        "score": 0.1,
+                        "memories_evaluated": 20,
+                        "beam_direct_span_candidate": True,
+                        "beam_direct_span_candidate_used": True,
+                        "beam_answer_candidate_count": 2,
+                        "beam_answer_selected_candidate_index": 2,
+                        "beam_answer_candidate_summaries": [
+                            {
+                                "id": "candidate_1",
+                                "kind": "generated",
+                                "answer_hash": "otherhash",
+                                "answer_chars": 41,
+                                "question_overlap_terms": 1,
+                                "specific_question_overlap_terms": 0,
+                            },
+                            {
+                                "id": "candidate_2",
+                                "kind": "direct_span",
+                                "answer_hash": "selectedhash",
+                                "answer_chars": 96,
+                                "question_overlap_terms": 4,
+                                "specific_question_overlap_terms": 3,
+                            },
+                        ],
+                        "judge_count": 3,
+                        "judge_pass_count": 0,
+                    }
+                },
+            }
+        ],
+    }
+
+    report = module.build_audit_report(bundle, run, verification={}, debug={}, cutoff=20)
+    row = report["failed_questions"][0]
+
+    assert report["failure_classes"]["beam_direct_span_candidate_wrong"] == 1
+    assert report["selector_metric_loss_summary"]["count"] == 0
+    assert row["selector_metric_loss"] is False
+    assert row["best_specific_question_overlap_kind"] == "direct_span"
