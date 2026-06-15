@@ -1,6 +1,8 @@
 # Kontext V2
 
-Local package skeleton for the Kontext V2 Mem0 mirror work.
+Local package skeleton for the Kontext V2 memory backend and legacy Mem0 migration/compatibility work.
+
+Kontext V2 is the active memory backend for this fork. Legacy Mem0 paths are retained for compatibility, migration checks, and rollback evidence; new operational work should target Kontext unless a task explicitly asks for Mem0 parity or restore testing.
 
 ## Safety
 

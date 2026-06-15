@@ -36,7 +36,10 @@ _qa_*/
 *.bak-*
 
 # Local agent/editor/runtime scratch
-.claude/
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/review-pr.md
 .serena/
 .vscode/
 .pytest_cache/
@@ -50,6 +53,9 @@ tools/kontext-v2/reports/
 *.log
 *.tmp
 *.zip
+!resources/heavy-file-ingestion-claude-code.zip
+!resources/heavy-file-ingestion-codex.zip
+!resources/open-brain-companion.zip
 *.7z
 *.tar
 *.tgz

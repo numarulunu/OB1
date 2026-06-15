@@ -3509,3 +3509,11 @@ Next step:
 - Canary cleanup: Deleted three exact synthetic dry-run canary marker rows (`kontext-local-8e70cdf48f8742ac8ee660f2`, `kontext-local-5fec8688888e870427060512`, `kontext-local-04e0c490500c0124ea243a9e`) after backup; remaining exact canaries `0`.
 - Verification: Final DB counts are `memories_total=4660`, `benchmark_rows=0`, `pending_flags=0`. `VACUUM FULL` reclaimed the benchmark bloat: database size is `222 MB`, `memories=12 MB`, `memory_categories=1592 kB`, and `memory_versions=5888 kB`. Kontext MCP `ingestion_status` reports `ok=true`, `mirror.memories=4660`, `maintenance.due=false`, and `pending_flags=0`. Dashboard snapshot builds in about `491 ms` with `total=4660`, `fresh_pct=1.0`, and no errors. Fresh cutover observer now reports `ob1_retrieval_quality=pass`, `base_live_mcp_retrieval=pass`, and `expanded_live_mcp_retrieval=pass`; remaining observer failures are stale/non-green cutover proof gates, not cleanup degradation.
 - Decision: Kontext is out of the benchmark-row degraded state. Do not bulk-delete Archive or category rows. Remaining non-cleanup work is the higher-level cutover/retirement evidence lane and a VPS maintenance window for the host restart/zombie-process warning.
+
+## 2026-06-15 - Repository cleanup pass for clone readiness
+
+- Summary: Tightened repository hygiene for the GitHub sync branch without touching runtime code. The pass fixed tracked-file ignore mismatches, preserved intentional release ZIPs, clarified the Kontext-primary versus legacy Mem0 compatibility boundary, and cleared ignored local cache debris from the working copy.
+- Files touched: `.gitignore`, `tools/kontext-v2/README.md`, and this log.
+- Local cleanup: Removed ignored local `.venv`, `.pytest_cache`, and `tools/kontext-v2/benchmark-data/` cache directories from the working copy. No source, tests, docs, reports, private bundles, or secrets were deleted.
+- Review-only candidates: `docs/open-brain-credential-tracker.xlsx` remains intentionally untouched because the filename is private-looking and the file is a tracked binary; review manually before deciding whether it belongs in the public repo.
+- Verification: `git diff --check`, `git diff --cached --check`, tracked-ignored audit, and staged secret-shape scan passed. No tests were run because the committed changes are docs/ignore/log hygiene only.
