@@ -22,7 +22,7 @@ python tools\kontext-v2\scripts\codex_native_mcp_canary.py
 To run the live canary, use `--execute`. This creates one temporary low-priority Mem0 memory, fetches it, deletes that exact ID, and verifies the Kontext canary write path stays dry-run with `writes_applied=0`.
 
 ```powershell
-python tools\kontext-v2\scripts\codex_native_mcp_canary.py --execute --workdir C:\Tools\OB1
+python tools\kontext-v2\scripts\codex_native_mcp_canary.py --execute --workdir C:\Tools\Kontext
 ```
 
 The known safe Codex invocation shape is `codex -a never exec --sandbox danger-full-access --ephemeral -C <repo> -o <out> -`. Older read-only `codex exec` probes may cancel MCP calls before the tool request reaches the server.

@@ -23,5 +23,5 @@
 - [ ] My contribution has a `README.md` with prerequisites, step-by-step instructions, and expected outcome
 - [ ] My `metadata.json` has all required fields
 - [ ] If my contribution depends on a skill or primitive, I declared it in metadata.json and linked it in the README
-- [ ] I tested this on my own Open Brain instance
+- [ ] I tested this against the relevant Kontext path or clearly documented why testing was not applicable
 - [ ] No credentials, API keys, or secrets are included

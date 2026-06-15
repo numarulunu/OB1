@@ -1,7 +1,7 @@
 {
-  "name": "ob1",
+  "name": "kontext",
   "version": "1.0.0",
-  "description": "<p align=\"center\">\r   <img src=\".github/ob1-logo-wide.png\" alt=\"Open Brain\" width=\"600\">\r </p>",
+  "description": "Kontext long-term memory backend, tooling, and retained compatibility material.",
   "main": "index.js",
   "directories": {
     "doc": "docs"
@@ -11,14 +11,14 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/NateBJones-Projects/OB1.git"
+    "url": "git+https://github.com/numarulunu/OB1.git"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "bugs": {
-    "url": "https://github.com/NateBJones-Projects/OB1/issues"
+    "url": "https://github.com/numarulunu/OB1/issues"
   },
-  "homepage": "https://github.com/NateBJones-Projects/OB1#readme"
+  "homepage": "https://github.com/numarulunu/OB1#readme"
 }

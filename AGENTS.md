@@ -1,4 +1,4 @@
-# Agent Instructions for Open Brain
+# Agent Instructions for Kontext
 
 This file is for Codex and other coding agents working in this repo. Follow `CLAUDE.md` for the repo contribution contract, and follow the local Kontext protocol below for Ionut-specific continuity.
 

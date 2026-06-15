@@ -1,34 +1,35 @@
-# CLAUDE.md — Agent Instructions for Open Brain
+# CLAUDE.md — Agent Instructions for Kontext
 
 This file helps AI coding tools (Claude Code, Codex, Cursor, etc.) work effectively in this repo.
 
 ## What This Repo Is
 
-Open Brain is a persistent AI memory system — one database (Supabase + pgvector), one MCP protocol, any AI client. This repo contains the extensions, recipes, schemas, dashboards, integrations, and skills that the community builds on top of the core Open Brain setup.
+Kontext is Ionut's long-term memory and project-continuity infrastructure. This repo contains the Kontext V2 backend, MCP bridge, client hooks, benchmark/evaluation tooling, dashboard support, and retained migration/compatibility material.
+
+Kontext V2 is primary. Legacy Mem0, Open Brain, and OB1 paths are backup, compatibility, migration, rollback, or upstream-provenance material unless a task explicitly scopes work to them.
 
 **License:** FSL-1.1-MIT. No commercial derivative works. Keep this in mind when generating code or suggesting dependencies.
 
 ## Repo Structure
 
 ```
-extensions/     — Curated, ordered learning path (6 builds). Do NOT add without maintainer approval.
-primitives/     — Reusable concept guides (must be referenced by 2+ extensions). Curated.
-recipes/        — Standalone capability builds. Open for community contributions.
-schemas/        — Database table extensions. Open.
-dashboards/     — Frontend templates (Vercel/Netlify). Open.
-integrations/   — MCP extensions, webhooks, capture sources. Open.
-skills/         — Reusable AI client skills and prompt packs. Open.
-docs/           — Setup guides, FAQ, companion prompts.
-resources/      — Official companion files and packaged exports.
+tools/kontext-v2/  — Kontext V2 backend, MCP bridge, benchmarks, gates, hooks, and tests.
+docs/              — Kontext evidence plus retained upstream setup/reference docs.
+project_log.md     — Append-only project activity log.
+recipes/           — Retained upstream/compatibility recipes unless specifically in scope.
+skills/            — Retained upstream/compatibility skills unless specifically in scope.
+resources/         — Retained packaged upstream resources and compatibility exports.
+dashboards/        — Dashboard templates and retained upstream frontend material.
+integrations/      — Retained upstream integrations unless specifically in scope.
 ```
 
-Every contribution lives in its own subfolder under the right category and must include `README.md` + `metadata.json`.
+Kontext operational work should usually start in `tools/kontext-v2/`.
 
 ## Guard Rails
 
 - **Never modify the core `thoughts` table structure.** Adding columns is fine; altering or dropping existing ones is not.
 - **No credentials, API keys, or secrets in any file.** Use environment variables.
-- **No binary blobs** over 1MB. No `.exe`, `.dmg`, `.zip`, `.tar.gz`.
+- **No new binary blobs** over 1MB. Existing retained resource bundles are compatibility assets; do not add more without a concrete reason.
 - **No `DROP TABLE`, `DROP DATABASE`, `TRUNCATE`, or unqualified `DELETE FROM`** in SQL files.
 - **MCP servers must be remote (Supabase Edge Functions), not local.** Never use `claude_desktop_config.json`, `StdioServerTransport`, or local Node.js servers. All extensions deploy as Edge Functions and connect via Claude Desktop's custom connectors UI (Settings → Connectors → Add custom connector → paste URL). See `docs/01-getting-started.md` Step 7 for the pattern.
 
@@ -37,7 +38,7 @@ Every contribution lives in its own subfolder under the right category and must 
 - **Title format:** `[category] Short description` (e.g., `[recipes] Email history import via Gmail API`, `[skills] Panning for Gold standalone skill pack`)
 - **Branch convention:** `contrib/<github-username>/<short-description>`
 - **Commit prefixes:** `[category]` matching the contribution type
-- Every PR must pass the automated review checks in `.github/workflows/ob1-review.yml` before human review
+- Every PR should pass relevant automated checks before human review
 - See `CONTRIBUTING.md` for the full review process, metadata.json template, and README requirements
 
 ## Key Files

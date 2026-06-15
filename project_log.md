@@ -3517,3 +3517,10 @@ Next step:
 - Local cleanup: Removed ignored local `.venv`, `.pytest_cache`, and `tools/kontext-v2/benchmark-data/` cache directories from the working copy. No source, tests, docs, reports, private bundles, or secrets were deleted.
 - Review-only candidates: `docs/open-brain-credential-tracker.xlsx` remains intentionally untouched because the filename is private-looking and the file is a tracked binary; review manually before deciding whether it belongs in the public repo.
 - Verification: `git diff --check`, `git diff --cached --check`, tracked-ignored audit, and staged secret-shape scan passed. No tests were run because the committed changes are docs/ignore/log hygiene only.
+
+## 2026-06-15 - Kontext-first repo identity correction
+
+- Summary: Corrected the clone-facing repo identity after user feedback that this repository should present as Kontext, not Open Brain. Replaced the root README and contribution guide with Kontext-first onboarding, updated agent/security/resource metadata, and marked Open Brain/OB1 references as compatibility/provenance where they remain necessary.
+- Files touched: `README.md`, `CONTRIBUTING.md`, `CLAUDE.md`, `AGENTS.md`, `SECURITY.md`, `CONTRIBUTORS.md`, `.github/PULL_REQUEST_TEMPLATE.md`, `.gitignore`, `package.json`, `resources/README.md`, `tools/kontext-v2/README.md`, and this log.
+- Decision: Retained upstream Open Brain/OB1 references only for actual filenames, remote repository naming, upstream resource names, historical/provenance context, tests, fixtures, and compatibility docs. Did not bulk rewrite recipes/tests/log history because that would risk breaking provenance or behavior.
+- Verification: Pending final staged diff, whitespace, tracked-ignore, and secret-shape checks.

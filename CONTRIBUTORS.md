@@ -1,6 +1,6 @@
-# Contributors
+# Contributors And Upstream Provenance
 
-Thanks to everyone who has contributed to Open Brain Source. Contributions of all kinds are valued — code, documentation, ideas, testing, mentoring, and community building.
+This repo retains upstream Open Brain/OB1 material as compatibility and provenance context while Kontext remains the active project identity. The list below preserves upstream contributor credit for retained material.
 
 See the [Contributor Ladder](CONTRIBUTING.md#contributor-ladder) for how progression works.
 
